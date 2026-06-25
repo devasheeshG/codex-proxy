@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Codex Proxy dark theme.
+
+   A neutral black/white foundation follows OpenAI's restrained product
+   aesthetic. Green is reserved for actions, selection, and healthy state; the
+   official OpenAI mark remains monochrome.
+--------------------------------------------------------------------------- */
+
+@theme {
+    /* Surfaces — neutral near-black through lifted graphite. */
+    --color-ink-950: #0d0d0d; /* app background */
+    --color-ink-900: #151515; /* sidebar, inset inputs / code panels */
+    --color-ink-850: #1c1c1c; /* cards / elevated surfaces */
+    --color-ink-800: #252525; /* hover wash */
+    --color-ink-700: #303030; /* default borders */
+    --color-ink-600: #424242; /* strong borders / toggle off / scrollbar */
+    --color-ink-500: #565656; /* hairline / parked rail */
+
+    /* Ink (text), lightest → most muted. fog-400 is lifted enough to clear
+       WCAG AA (4.5:1) on the card surfaces it labels. */
+    --color-fog-100: #f7f7f8; /* primary text */
+    --color-fog-200: #dedee3; /* strong secondary */
+    --color-fog-300: #b8b8c1; /* secondary */
+    --color-fog-400: #9898a3; /* muted / labels */
+
+    /* Product accent. The OpenAI mark itself must stay black or white. */
+    --color-brand-500: #10a37f;
+    --color-brand-400: #20b892;
+    --color-brand-300: #6ee7c4;
+
+    /* Status — readable on dark tints and as solid fills. */
+    --color-good-500: #36c99a;
+    --color-warn-500: #e3a33d;
+    --color-bad-500: #f07b72; /* lifted for AA on the bad/10–15 tints it sits on */
+
+    /* Charts — green leads, with cool supporting hues for dense comparisons. */
+    --color-chart-1: #10a37f; /* green — primary series (requests) */
+    --color-chart-2: #60a5fa; /* blue — secondary series (tokens) */
+    --color-chart-3: #a78bfa; /* violet */
+    --color-chart-4: #e3a33d; /* amber */
+    --color-chart-grid: #252525; /* gridlines (= ink-800) */
+    --color-chart-axis: #9898a3; /* axis tick labels (= fog-400) */
+
+    --font-sans:
+        ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+        sans-serif;
+    --font-serif: ui-serif, Georgia, "Times New Roman", serif;
+    --font-mono: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.25), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-pop: 0 16px 40px -8px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+* {
+    border-color: var(--color-ink-700);
+}
+
+html,
+body {
+    background-color: var(--color-ink-950);
+    color: var(--color-fog-100);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+}
+
+body {
+    font-feature-settings:
+        "tnum" 1,
+        "cv01" 1;
+}
+
+::selection {
+    background-color: color-mix(in srgb, var(--color-brand-500) 28%, transparent);
+    color: var(--color-fog-100);
+}
+
+/* Slim, neutral scrollbars. */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-ink-600) transparent;
+}
+*::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+    background-color: var(--color-ink-600);
+    border-radius: 9999px;
+}
+*::-webkit-scrollbar-track {
+    background-color: transparent;
+}
+
+/* Drop the native number-input spinners; they crowd and clip the centred value. */
+input[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Keyboard focus is always visible, but mouse clicks don't draw a ring. */
+:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-brand-500) 80%, transparent);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+/* Respect a reduced-motion preference: keep transitions but make them instant. */
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+    }
+}
