@@ -1,0 +1,27 @@
+# Python / backend
+__pycache__/
+*.py[cod]
+backend/.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Local data / secrets
+.env
+backend/data/
+*.db
+*.sqlite3
+
+# Node / frontend
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+
+# Operator-specific deploy override (not for the public repo)
+docker-compose.live.yml
+.blue-green-state
+.blue-green-state.lock

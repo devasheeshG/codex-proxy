@@ -1,0 +1,74 @@
+{
+    "files.exclude": {
+        "**/.git": true,
+        "**/.svn": true,
+        "**/.hg": true,
+        "**/CVS": true,
+        "**/.DS_Store": true,
+        "**/Thumbs.db": true,
+        "**/.vscode": true,
+        "**/~*": true,
+        "**/__pycache__": true,
+        "**/*.egg-info": true,
+        "**/.pytest_cache": true,
+        "**/.ruff_cache": true,
+        "**/.mypy_cache": true,
+        "**/.cache": true,
+        "**/.turbo": true,
+        "**/.vercel": true,
+        "**/.venv": true,
+        "**/coverage": true,
+        "**/dist": true,
+        "**/build": true,
+        "backend/uv.lock": true,
+        "backend/data": true,
+        ".blue-green-state": true,
+        ".blue-green-state.lock": true,
+
+        "**/node_modules": true,
+        "**/.next": true,
+        "**/*.tsbuildinfo": true,
+        "**/next-env.d.ts": true,
+        "frontend/pnpm-lock.yaml": true,
+        "frontend/pnpm-workspace.yaml": true,
+
+        "**/*.db": true,
+        "**/*.sqlite3": true
+    },
+
+    "search.exclude": {
+        "**/.venv": true,
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/.ruff_cache": true,
+        "**/.cache": true,
+        "**/.turbo": true,
+        "**/.vercel": true,
+        "**/node_modules": true,
+        "**/.next": true,
+        "**/coverage": true,
+        "**/dist": true,
+        "**/build": true,
+        "backend/uv.lock": true,
+        "frontend/pnpm-lock.yaml": true,
+        "backend/data": true
+    },
+
+    "files.watcherExclude": {
+        "**/.venv/**": true,
+        "**/__pycache__/**": true,
+        "**/.pytest_cache/**": true,
+        "**/.ruff_cache/**": true,
+        "**/.cache/**": true,
+        "**/.turbo/**": true,
+        "**/.vercel/**": true,
+        "**/node_modules/**": true,
+        "**/.next/**": true,
+        "**/coverage/**": true,
+        "**/dist/**": true,
+        "**/build/**": true,
+        "**/backend/data/**": true
+    },
+
+    "makefile.configureOnOpen": false
+}
