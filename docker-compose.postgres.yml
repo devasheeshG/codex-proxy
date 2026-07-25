@@ -1,0 +1,34 @@
+# Bundled PostgreSQL. Layer it on top of docker-compose.yaml when you want this stack to manage its
+# own database (the common case):
+#
+#   docker compose -f docker-compose.yaml -f docker-compose.postgres.yml [-f docker-compose.traefik.yml] up -d --build
+#
+# To use an external database instead, simply omit this file and point POSTGRES_HOST (and the other
+# POSTGRES_* vars) in .env at it.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: codex-proxy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Hold the migration back until Postgres is accepting connections.
+  backend-init-db:
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+

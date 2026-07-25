@@ -1,0 +1,4 @@
+# Created automatically by scripts/blue-green.sh; do not edit while a deploy runs.
+active_slot=blue
+active_project=codex-proxy-blue
+active_priority=200

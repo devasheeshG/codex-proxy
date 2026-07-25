@@ -1,0 +1,73 @@
+# Bundled Traefik reverse proxy. It fronts the dashboard and the API on a single origin (no CORS):
+# Host(`${DOMAIN}`) goes to the dashboard, and Host(`${DOMAIN}`) + PathPrefix(`/api`) goes to the backend.
+#
+# Local (HTTP on one port -- the default):
+#   docker compose -f docker-compose.yaml -f docker-compose.postgres.yml -f docker-compose.traefik.yml up -d --build
+#   -> dashboard at http://localhost:${HTTP_PORT:-8080}/  and API base at http://localhost:${HTTP_PORT:-8080}/api
+#
+# Production (HTTPS via Let's Encrypt): in .env set DOMAIN to your real host, ACME_EMAIL, TRAEFIK_ENTRYPOINT=websecure,
+# HTTP_PORT=80 and HTTPS_PORT=443, then run the same command. Traefik obtains a certificate over the TLS challenge and
+# serves https://${DOMAIN}/ (dashboard) and https://${DOMAIN}/api (backend).
+
+services:
+  traefik:
+    image: traefik:v3
+    container_name: codex-proxy-traefik
+    restart: unless-stopped
+    command:
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # TLS is configured on the websecure entrypoint, so routers only need to select the entrypoint
+      # (TRAEFIK_ENTRYPOINT). Locally they use `web` (plain HTTP) and ACME is never triggered.
+      - --entrypoints.websecure.http.tls=true
+      - --entrypoints.websecure.http.tls.certresolver=le
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:-admin@example.com}
+      - --certificatesresolvers.le.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-letsencrypt:/letsencrypt
+    networks:
+      - traefik
+
+  backend:
+    networks:
+      - default
+      - traefik
+    labels:
+      # Proxy + admin API. The app mounts its routes under /api, so the prefix is NOT stripped.
+      - traefik.enable=true
+      - traefik.http.routers.codex-proxy-api-${BG_SLOT:-stable}.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.codex-proxy-api-${BG_SLOT:-stable}.entrypoints=${TRAEFIK_ENTRYPOINT:-web}
+      - traefik.http.routers.codex-proxy-api-${BG_SLOT:-stable}.priority=${BG_API_PRIORITY:-101}
+      - traefik.http.routers.codex-proxy-api-${BG_SLOT:-stable}.service=codex-proxy-api-${BG_SLOT:-stable}
+      - traefik.http.services.codex-proxy-api-${BG_SLOT:-stable}.loadbalancer.server.port=80
+
+  frontend:
+    networks:
+      - default
+      - traefik
+    labels:
+      # Dashboard. It calls the backend at the relative /api path (same origin), routed above by PathPrefix.
+      - traefik.enable=true
+      - traefik.http.routers.codex-proxy-${BG_SLOT:-stable}.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.codex-proxy-${BG_SLOT:-stable}.entrypoints=${TRAEFIK_ENTRYPOINT:-web}
+      - traefik.http.routers.codex-proxy-${BG_SLOT:-stable}.priority=${BG_PRIORITY:-100}
+      - traefik.http.routers.codex-proxy-${BG_SLOT:-stable}.service=codex-proxy-${BG_SLOT:-stable}
+      - traefik.http.routers.codex-proxy-${BG_SLOT:-stable}.middlewares=codex-proxy-slot-${BG_SLOT:-stable}
+      - traefik.http.middlewares.codex-proxy-slot-${BG_SLOT:-stable}.headers.customresponseheaders.X-Deployment-Slot=${BG_SLOT:-stable}
+      - traefik.http.services.codex-proxy-${BG_SLOT:-stable}.loadbalancer.server.port=3000
+
+networks:
+  traefik:
+    name: codex-proxy-traefik
+
+volumes:
+  traefik-letsencrypt:
