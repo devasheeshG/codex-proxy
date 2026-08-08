@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible problem on the latest main branch.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: Search existing issues first. Remove credentials, prompts, cookies, and private data from logs.
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: Commit SHA or release tag
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Docker Compose
+        - Blue-green production deployment
+        - Local development
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest reliable reproduction.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior and sanitized logs
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checklist
+      options:
+        - label: I reproduced this on the latest main branch.
+          required: true
+        - label: I removed credentials and private data.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true
