@@ -18,6 +18,15 @@ credential, prompt, or production record is used.
 > control and are permitted to use this way; check the terms that apply to your
 > organization and subscription.
 
+## Quick start
+
+The supported installation path is agent-assisted: copy the complete prompt in
+[INSTALLATION_AGENTS.md](INSTALLATION_AGENTS.md) into your coding or infrastructure
+agent. It will ask where to install, whether to use a reverse proxy, and whether
+to use an existing Postgres instance before it builds, configures credentials,
+creates the first user, installs the client helper, and verifies the deployment.
+No manual installation steps are required.
+
 ## Project status
 
 This project was built quickly and entirely through AI-assisted development—
@@ -192,49 +201,6 @@ pool-level calculation rather than whichever account happened to answer last.
 The default ceiling is **3 concurrent requests per account**. It is deliberately
 configurable and should be calibrated for the provider, subscription tier, and
 model; see the TODO in `backend/app/utils/account_limiter.py` before changing it.
-
-## Quick start
-
-Prerequisites: Docker and Docker Compose.
-
-Want an agent to handle the setup? Copy the complete prompt in
-[install_agents.md](install_agents.md) into your coding or infrastructure agent.
-It will first confirm the installation path, database, domain, TLS, reverse
-proxy, storage, and notification choices, then install and verify the proxy
-without exposing credentials.
-
-For a manual installation, continue below.
-
-```bash
-cp .env.example .env
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-
-Put the generated values in `FERNET_KEY` and `JWT_SECRET`, set strong
-`ADMIN_PASSWORD` and `POSTGRES_PASSWORD` values, then start the local stack:
-
-```bash
-docker compose \
-  -f docker-compose.yaml \
-  -f docker-compose.postgres.yml \
-  -f docker-compose.traefik.yml \
-  up -d --build
-```
-
-Open `http://localhost:8080`. The dashboard and API share the same origin; API
-routes are under `/api`.
-
-The Compose overlays are intentionally separate:
-
-| File | Services |
-| --- | --- |
-| `docker-compose.yaml` | Backend, migration, quota refresher, notifications, dashboard |
-| `docker-compose.postgres.yml` | Persistent PostgreSQL |
-| `docker-compose.traefik.yml` | The single HTTP/HTTPS gateway |
-
-Omit the Postgres overlay when using an external database. Do not run a second
-Traefik instance on the same published ports.
 
 ## First-run setup
 
