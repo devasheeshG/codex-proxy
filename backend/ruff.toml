@@ -1,0 +1,11 @@
+# Keep the formatter defaults; only the project line-length is customized.
+line-length = 150
+
+[lint]
+# Default selection plus isort and bugbear.
+select = ["E", "F", "W", "I", "B"]
+
+[lint.flake8-bugbear]
+# FastAPI parameter markers and `Depends` are immutable call defaults used in
+# route/dependency signatures — they are evaluated once, by design.
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query", "fastapi.Body", "fastapi.Path", "fastapi.Cookie", "fastapi.Form", "fastapi.File", "fastapi.Header"]
