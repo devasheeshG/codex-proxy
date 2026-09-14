@@ -5,6 +5,7 @@ from .base import DatabaseBase, get_db, get_db_cm
 from .schemas import (
     AccountDb,
     ApiKeyDb,
+    DashboardMemberDb,
     NotificationChannelDb,
     NotificationDeliveryDb,
     NotificationRuleDb,
@@ -21,6 +22,7 @@ __all__ = [
     "AccountDb",
     "UserDb",
     "ApiKeyDb",
+    "DashboardMemberDb",
     "OpenAIFallbackDb",
     "ProxyEventDb",
     "UsageRecordDb",

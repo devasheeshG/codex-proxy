@@ -1,28 +1,85 @@
 # Path: app/utils/security/dependencies.py
 # Description: FastAPI dependencies for admin sessions and proxy-user authentication.
 
+import json
+import uuid
+from dataclasses import dataclass
 from typing import Optional
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.utils.postgres import ApiKeyDb, UserDb, get_db
+from app.config import get_settings
+from app.utils.postgres import ApiKeyDb, DashboardMemberDb, UserDb, get_db
 
 from .keys import hash_key
-from .tokens import decode_admin_token
+from .permissions import has_permission, required_permission, verify_password
+from .tokens import decode_admin_token, verify_admin_credentials
 
 
-def require_admin(authorization: Optional[str] = Header(default=None)) -> str:
-    """FastAPI dependency: require a valid admin JWT, return the admin subject."""
+@dataclass(frozen=True)
+class AdminPrincipal:
+    subject: str
+    display_name: str
+    member_id: Optional[uuid.UUID]
+    role: str
+    permissions: frozenset[str]
+
+
+def _principal_from_claims(claims: dict, db: Session) -> Optional[AdminPrincipal]:
+    member_id = claims.get("member_id")
+    if not member_id:
+        if claims.get("sub") == get_settings().ADMIN_USERNAME:
+            subject = str(claims.get("sub"))
+            return AdminPrincipal(subject, subject, None, "owner", frozenset({"*"}))
+        return None
+    try:
+        member = db.get(DashboardMemberDb, uuid.UUID(str(member_id)))
+    except (ValueError, TypeError):
+        return None
+    if member is None or not member.active:
+        return None
+    try:
+        permissions = frozenset(json.loads(member.permissions_json or "[]"))
+    except (TypeError, ValueError):
+        permissions = frozenset()
+    return AdminPrincipal(member.username, member.display_name, member.id, member.role, permissions)
+
+
+def require_admin_principal(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),  # noqa: B008
+) -> AdminPrincipal:
+    """Authenticate a dashboard member and enforce the route permission."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Admin authentication required")
-
     token = authorization.split(" ", 1)[1].strip()
     claims = decode_admin_token(token)
-    if claims is None:
+    principal = _principal_from_claims(claims, db) if claims is not None else None
+    if principal is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid admin session")
+    required = required_permission(request.url.path, request.method)
+    if not has_permission(principal.permissions, required):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Missing permission: {required}")
+    return principal
 
-    return str(claims.get("sub"))
+
+def require_admin(principal: AdminPrincipal = Depends(require_admin_principal)) -> str:  # noqa: B008
+    """Compatibility dependency returning the authenticated dashboard subject."""
+    return principal.subject
+
+
+def authenticate_dashboard_member(username: str, password: str, db: Session) -> Optional[DashboardMemberDb]:
+    """Return an active database member when credentials are valid."""
+    member = db.query(DashboardMemberDb).filter(DashboardMemberDb.username == username.strip().lower()).first()
+    if member is None or not member.active or not verify_password(password, member.password_hash):
+        return None
+    return member
+
+
+def is_root_credentials(username: str, password: str) -> bool:
+    return verify_admin_credentials(username, password)
 
 
 def authenticate_user(

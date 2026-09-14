@@ -20,12 +20,21 @@ def verify_admin_credentials(username: str, password: str) -> bool:
     return user_ok and pass_ok
 
 
-def issue_admin_token() -> str:
-    """Issue a signed JWT for an authenticated admin session."""
+def issue_admin_token(
+    *,
+    subject: Optional[str] = None,
+    member_id: Optional[str] = None,
+    role: str = "owner",
+    permissions: Optional[list[str]] = None,
+) -> str:
+    """Issue a signed JWT for a dashboard member or the break-glass owner."""
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": settings.ADMIN_USERNAME,
+        "sub": subject or settings.ADMIN_USERNAME,
         "role": "admin",
+        "member_id": member_id,
+        "member_role": role,
+        "permissions": permissions if permissions is not None else ["*"],
         "iat": now,
         "exp": now + timedelta(minutes=settings.JWT_EXPIRE_MINUTES),
     }
