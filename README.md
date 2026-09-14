@@ -80,13 +80,12 @@ are the bottleneck now (pun intended).
 
 ### Team access
 
-- Create, disable, delete, and assign built-in roles to database-backed dashboard
-  members from the **Team** page. Each member card shows its effective permissions.
+- Create, disable, delete, and manage database-backed dashboard members from the
+  **Team** page. Each member can be assigned an explicit checked list of exact
+  permission strings; there are no required display names or role presets.
 - Permissions are split across analytics, archived event bodies, accounts, proxy
-  users, API keys, fallbacks, notifications, team members, and role assignment;
-  mutating areas distinguish read, write, and delete access.
-- Built-in roles cover administrators, read-only viewers, event viewers,
-  operations, accounts, users, fallbacks, notifications, and team management.
+  users, API keys, fallbacks, notifications, and team members. Mutating areas
+  distinguish read, write, and delete access.
 - Authorization is enforced by the API as well as navigation visibility. Unknown
   administrative routes fail closed for non-owner members.
 - The environment-configured root login remains the break-glass owner. The

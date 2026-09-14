@@ -12,8 +12,6 @@ export interface LoginResponse {
 
 export interface AuthProfile {
     username: string;
-    display_name: string;
-    role: string;
     permissions: string[];
     root: boolean;
 }
@@ -21,8 +19,6 @@ export interface AuthProfile {
 export interface DashboardMember {
     id: string;
     username: string;
-    display_name: string;
-    role: string;
     permissions: string[];
     active: boolean;
     created_at: string;

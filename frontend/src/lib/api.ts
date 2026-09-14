@@ -173,17 +173,10 @@ export const api = {
     teamMembers() {
         return request<{ members: DashboardMember[] }>("/v1/team/members");
     },
-    teamRoles() {
-        return request<{ roles: { id: string; label: string; permissions: string[] }[] }>(
-            "/v1/team/roles",
-        );
+    teamPermissions() {
+        return request<{ permissions: string[] }>("/v1/team/permissions");
     },
-    createTeamMember(input: {
-        username: string;
-        display_name: string;
-        password: string;
-        role: string;
-    }) {
+    createTeamMember(input: { username: string; password: string; permissions: string[] }) {
         return request<{ member: DashboardMember }>("/v1/team/members", {
             method: "POST",
             body: input,
@@ -191,7 +184,7 @@ export const api = {
     },
     updateTeamMember(
         id: string,
-        input: { display_name?: string; password?: string; role?: string; active?: boolean },
+        input: { password?: string; permissions?: string[]; active?: boolean },
     ) {
         return request<{ member: DashboardMember }>(`/v1/team/members/${id}`, {
             method: "PUT",
