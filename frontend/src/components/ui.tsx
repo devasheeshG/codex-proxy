@@ -4,7 +4,7 @@
 // Small, dependency-free UI primitives shared across pages.
 // ---------------------------------------------------------------------------
 
-import { Check, Copy, ListChecks, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronDown, Copy, ListChecks, TriangleAlert, X } from "lucide-react";
 import { ReactNode, useEffect, useId, useRef, useState } from "react";
 
 // --- Button ----------------------------------------------------------------
@@ -36,6 +36,87 @@ export function Button({
         >
             {children}
         </button>
+    );
+}
+
+// --- Select menu -----------------------------------------------------------
+
+export function SelectMenu({
+    value,
+    options,
+    onChange,
+    ariaLabel,
+    className = "",
+}: {
+    value: string;
+    options: { value: string; label: string }[];
+    onChange: (value: string) => void;
+    ariaLabel: string;
+    className?: string;
+}) {
+    const [open, setOpen] = useState(false);
+    const ref = useRef<HTMLDivElement>(null);
+    const selected = options.find((option) => option.value === value);
+
+    useEffect(() => {
+        if (!open) return;
+        const onPointerDown = (event: MouseEvent) => {
+            if (!ref.current?.contains(event.target as Node)) setOpen(false);
+        };
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === "Escape") setOpen(false);
+        };
+        document.addEventListener("mousedown", onPointerDown);
+        document.addEventListener("keydown", onKeyDown);
+        return () => {
+            document.removeEventListener("mousedown", onPointerDown);
+            document.removeEventListener("keydown", onKeyDown);
+        };
+    }, [open]);
+
+    return (
+        <div ref={ref} className={`relative ${className}`}>
+            <button
+                type="button"
+                aria-label={ariaLabel}
+                aria-haspopup="listbox"
+                aria-expanded={open}
+                onClick={() => setOpen((current) => !current)}
+                className="border-ink-600 bg-ink-900 text-fog-100 hover:bg-ink-800 focus:border-brand-400 focus:ring-brand-500/25 flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors outline-none focus:ring-2"
+            >
+                <span className="truncate">{selected?.label ?? "Select"}</span>
+                <ChevronDown
+                    size={15}
+                    className={`text-fog-400 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+                />
+            </button>
+            {open ? (
+                <div
+                    role="listbox"
+                    className="border-ink-600 bg-ink-850 absolute top-full right-0 left-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-lg border py-1 shadow-[var(--shadow-pop)]"
+                >
+                    {options.map((option) => {
+                        const active = option.value === value;
+                        return (
+                            <button
+                                key={option.value}
+                                type="button"
+                                role="option"
+                                aria-selected={active}
+                                onClick={() => {
+                                    onChange(option.value);
+                                    setOpen(false);
+                                }}
+                                className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${active ? "bg-brand-500/15 text-brand-300" : "text-fog-200 hover:bg-ink-700"}`}
+                            >
+                                {active ? <Check size={14} /> : <span className="w-3.5" />}
+                                <span>{option.label}</span>
+                            </button>
+                        );
+                    })}
+                </div>
+            ) : null}
+        </div>
     );
 }
 

@@ -9,11 +9,19 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { Menu, X } from "lucide-react";
-import { BrandMark, NavLinks, Sidebar, SignOutButton } from "./Sidebar";
+import { api } from "@/lib/api";
+import { BrandMark, NavLinks, SignOutButton } from "./Sidebar";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
     const [open, setOpen] = useState(false);
+    const [permissions, setPermissions] = useState<string[] | null>(null);
     const pathname = usePathname();
+
+    useEffect(() => {
+        api.authProfile()
+            .then((profile) => setPermissions(profile.permissions))
+            .catch(() => setPermissions([]));
+    }, []);
 
     // Close the drawer whenever the route changes.
     useEffect(() => {
@@ -37,7 +45,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
         <div className="min-h-screen">
             {/* Desktop rail */}
-            <Sidebar />
+            <aside className="border-ink-700 bg-ink-900 fixed inset-y-0 left-0 hidden w-60 flex-col border-r md:flex">
+                <div className="px-5 py-5">
+                    <BrandMark />
+                </div>
+                <div className="flex-1 px-3 py-2">
+                    <NavLinks permissions={permissions} />
+                </div>
+                <div className="border-ink-700 border-t p-3">
+                    <SignOutButton />
+                </div>
+            </aside>
 
             {/* Mobile top bar */}
             <header className="border-ink-700 bg-ink-900/90 sticky top-0 z-30 flex items-center justify-between border-b px-4 py-3 backdrop-blur md:hidden">
@@ -71,7 +89,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                             </button>
                         </div>
                         <div className="flex-1 px-3 py-2">
-                            <NavLinks onNavigate={() => setOpen(false)} />
+                            <NavLinks onNavigate={() => setOpen(false)} permissions={permissions} />
                         </div>
                         <div className="border-ink-700 border-t p-3">
                             <SignOutButton />

@@ -25,7 +25,7 @@ import {
     TimeRange,
     UsagePage,
     UsageRecord,
-    User,
+    UserLookup,
 } from "@/lib/types";
 import {
     formatCostUsd,
@@ -93,16 +93,16 @@ export default function OverviewPage() {
     const analyticsRequestId = useRef(0);
 
     // --- user filter ------------------------------------------------------------
-    const [allUsers, setAllUsers] = useState<User[]>([]);
+    const [allUsers, setAllUsers] = useState<UserLookup[]>([]);
     const [filterUserId, setFilterUserId] = useState<string | null>(null);
     const [modelOptions, setModelOptions] = useState<string[]>([]);
     const [filterModel, setFilterModel] = useState("");
 
     useEffect(() => {
-        api.users()
+        api.analyticsUsers()
             .then(setAllUsers)
             .catch(() => {});
-        api.userModelOptions()
+        api.analyticsModels()
             .then(setModelOptions)
             .catch(() => {});
     }, []);

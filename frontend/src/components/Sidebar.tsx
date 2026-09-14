@@ -15,17 +15,44 @@ interface NavItem {
     href: string;
     label: string;
     icon: React.ReactNode;
+    permission: string;
 }
 
 const ICON = { size: 18, strokeWidth: 1.75 } as const;
 
 const NAV: NavItem[] = [
-    { href: "/", label: "Overview", icon: <LayoutDashboard {...ICON} /> },
-    { href: "/accounts", label: "Accounts", icon: <Boxes {...ICON} /> },
-    { href: "/fallbacks", label: "API fallbacks", icon: <Cable {...ICON} /> },
-    { href: "/users", label: "Users", icon: <Users {...ICON} /> },
-    { href: "/notifications", label: "Notifications", icon: <BellRing {...ICON} /> },
-    { href: "/events", label: "Events", icon: <Activity {...ICON} /> },
+    {
+        href: "/",
+        label: "Overview",
+        icon: <LayoutDashboard {...ICON} />,
+        permission: "analytics:read",
+    },
+    {
+        href: "/accounts",
+        label: "Accounts",
+        icon: <Boxes {...ICON} />,
+        permission: "accounts:read",
+    },
+    {
+        href: "/fallbacks",
+        label: "API fallbacks",
+        icon: <Cable {...ICON} />,
+        permission: "fallbacks:read",
+    },
+    { href: "/users", label: "Users", icon: <Users {...ICON} />, permission: "proxy_users:read" },
+    {
+        href: "/notifications",
+        label: "Notifications",
+        icon: <BellRing {...ICON} />,
+        permission: "notifications:read",
+    },
+    {
+        href: "/events",
+        label: "Events",
+        icon: <Activity {...ICON} />,
+        permission: "analytics:read",
+    },
+    { href: "/team", label: "Team", icon: <Users {...ICON} />, permission: "team:members:read" },
 ];
 
 export function BrandMark() {
@@ -46,14 +73,25 @@ export function BrandMark() {
     );
 }
 
-export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
+export function NavLinks({
+    onNavigate,
+    permissions,
+}: {
+    onNavigate?: () => void;
+    permissions?: string[] | null;
+}) {
     const pathname = usePathname();
     const isActive = (href: string) =>
         href === "/" ? pathname === "/" : pathname.startsWith(href);
 
     return (
         <nav className="space-y-1">
-            {NAV.map((item) => {
+            {NAV.filter(
+                (item) =>
+                    permissions === undefined ||
+                    permissions?.includes("*") === true ||
+                    permissions?.includes(item.permission) === true,
+            ).map((item) => {
                 const active = isActive(item.href);
                 return (
                     <Link

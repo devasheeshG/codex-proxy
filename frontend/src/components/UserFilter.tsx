@@ -2,14 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Check, UserRound } from "lucide-react";
-import { User } from "@/lib/types";
+import { UserLookup } from "@/lib/types";
 
 export function UserFilter({
     users,
     value,
     onChange,
 }: {
-    users: User[];
+    users: UserLookup[];
     value: string | null;
     onChange: (id: string | null) => void;
 }) {

@@ -30,6 +30,9 @@ import {
     UsagePage,
     ProxyEventPage,
     ArchiveRequestDetail,
+    AuthProfile,
+    DashboardMember,
+    UserLookup,
     User,
 } from "./types";
 
@@ -155,6 +158,48 @@ export const api = {
             body: { username, password },
             skipAuthRedirect: true,
         });
+    },
+    authProfile() {
+        return request<AuthProfile>("/v1/auth/me");
+    },
+    async analyticsUsers(): Promise<UserLookup[]> {
+        const result = await request<{ users: UserLookup[] }>("/v1/lookups/users");
+        return result.users;
+    },
+    async analyticsModels(): Promise<string[]> {
+        const result = await request<{ models: string[] }>("/v1/lookups/models");
+        return result.models;
+    },
+    teamMembers() {
+        return request<{ members: DashboardMember[] }>("/v1/team/members");
+    },
+    teamRoles() {
+        return request<{ roles: { id: string; label: string; permissions: string[] }[] }>(
+            "/v1/team/roles",
+        );
+    },
+    createTeamMember(input: {
+        username: string;
+        display_name: string;
+        password: string;
+        role: string;
+    }) {
+        return request<{ member: DashboardMember }>("/v1/team/members", {
+            method: "POST",
+            body: input,
+        });
+    },
+    updateTeamMember(
+        id: string,
+        input: { display_name?: string; password?: string; role?: string; active?: boolean },
+    ) {
+        return request<{ member: DashboardMember }>(`/v1/team/members/${id}`, {
+            method: "PUT",
+            body: input,
+        });
+    },
+    deleteTeamMember(id: string) {
+        return request<unknown>(`/v1/team/members/${id}`, { method: "DELETE" });
     },
 
     // Overview + analytics. Each accepts an optional range and user filter;

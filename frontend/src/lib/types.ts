@@ -10,6 +10,30 @@ export interface LoginResponse {
     token_type: string;
 }
 
+export interface AuthProfile {
+    username: string;
+    display_name: string;
+    role: string;
+    permissions: string[];
+    root: boolean;
+}
+
+export interface DashboardMember {
+    id: string;
+    username: string;
+    display_name: string;
+    role: string;
+    permissions: string[];
+    active: boolean;
+    created_at: string;
+    last_login_at: string | null;
+}
+
+export interface UserLookup {
+    id: string;
+    name: string;
+}
+
 // Overview stats -------------------------------------------------------------
 
 export interface OverviewStats {

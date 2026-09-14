@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { ProxyEvent, TimeRange, User } from "@/lib/types";
+import { ProxyEvent, TimeRange, UserLookup } from "@/lib/types";
 import { RangePicker } from "@/components/RangePicker";
 import { UserFilter } from "@/components/UserFilter";
 import { EventTypeFilter } from "@/components/EventTypeFilter";
@@ -49,7 +49,7 @@ function displayModel(metadata: Record<string, unknown>): string {
 
 export default function EventsPage() {
     const [range, setRange] = useState<TimeRange>(initialRange);
-    const [users, setUsers] = useState<User[]>([]);
+    const [users, setUsers] = useState<UserLookup[]>([]);
     const [models, setModels] = useState<string[]>([]);
     const [userId, setUserId] = useState<string | null>(null);
     const [eventType, setEventType] = useState("");
@@ -97,10 +97,10 @@ export default function EventsPage() {
         }
     }, [load]);
     useEffect(() => {
-        api.users()
+        api.analyticsUsers()
             .then(setUsers)
             .catch(() => {});
-        api.userModelOptions()
+        api.analyticsModels()
             .then(setModels)
             .catch(() => {});
     }, []);
@@ -284,7 +284,8 @@ export default function EventsPage() {
                                                     <span>{e.event_type}</span>
                                                     {(e.event_type === "request.received" ||
                                                         e.event_type === "response.returned") &&
-                                                    e.archive_hot !== false && e.request_id?.startsWith("req_") ? (
+                                                    e.archive_hot !== false &&
+                                                    e.request_id?.startsWith("req_") ? (
                                                         <button
                                                             type="button"
                                                             onClick={() =>
