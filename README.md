@@ -5,6 +5,9 @@ pool of authorized Codex subscription accounts through one endpoint. It handles
 quota-aware routing, transparent failover, per-user policy, usage accounting,
 request archives, notifications, and a responsive operations dashboard.
 
+Looking for a Claude Code proxy instead? See the companion
+[Claude Code Proxy](https://github.com/devasheeshG/claude-code-proxy).
+
 ![Codex Proxy overview](docs/screenshots/overview.png)
 
 The screenshots in this README are generated with internally consistent
