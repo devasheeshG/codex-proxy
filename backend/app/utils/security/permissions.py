@@ -1,8 +1,4 @@
-"""Dashboard roles, permissions, and request-to-permission mapping.
-
-The proxy API-key users are deliberately separate from dashboard members. This
-module only governs the administrative console.
-"""
+"""Dashboard permission catalog and request-to-permission mapping."""
 
 from __future__ import annotations
 
@@ -33,53 +29,8 @@ PERMISSIONS: Final[frozenset[str]] = frozenset(
         "team:members:read",
         "team:members:write",
         "team:members:delete",
-        "team:roles:read",
-        "team:roles:write",
     }
 )
-
-ROLE_PERMISSIONS: Final[dict[str, frozenset[str]]] = {
-    "owner": frozenset({"*"}),
-    "administrator": PERMISSIONS,
-    "overview_viewer": frozenset({"analytics:read"}),
-    "event_viewer": frozenset({"analytics:read", "events:archive:read"}),
-    "operations_operator": frozenset({"analytics:read", "accounts:read", "accounts:write"}),
-    "account_manager": frozenset({"accounts:read", "accounts:write", "accounts:delete"}),
-    "user_manager": frozenset(
-        {"analytics:read", "proxy_users:read", "proxy_users:write", "proxy_users:delete", "api_keys:read", "api_keys:write", "api_keys:delete"}
-    ),
-    "fallback_manager": frozenset({"fallbacks:read", "fallbacks:write", "fallbacks:delete"}),
-    "notification_manager": frozenset({"notifications:read", "notifications:write"}),
-    "team_manager": frozenset(
-        {
-            "team:members:read",
-            "team:members:write",
-            "team:members:delete",
-            "team:roles:read",
-            "team:roles:write",
-        }
-    ),
-    "read_only": frozenset({"analytics:read", "accounts:read", "proxy_users:read", "api_keys:read", "fallbacks:read", "notifications:read"}),
-}
-
-ROLE_LABELS: Final[dict[str, str]] = {
-    "owner": "Owner",
-    "administrator": "Administrator",
-    "overview_viewer": "Overview viewer",
-    "event_viewer": "Event viewer",
-    "operations_operator": "Operations operator",
-    "account_manager": "Account manager",
-    "user_manager": "User manager",
-    "fallback_manager": "Fallback manager",
-    "notification_manager": "Notification manager",
-    "team_manager": "Team manager",
-    "read_only": "Read-only viewer",
-}
-
-
-def permissions_for_role(role: str) -> frozenset[str]:
-    """Return the immutable permission set for a supported role."""
-    return ROLE_PERMISSIONS.get(role, frozenset())
 
 
 def has_permission(permissions: set[str] | frozenset[str], required: str | None) -> bool:
@@ -90,9 +41,9 @@ def has_permission(permissions: set[str] | frozenset[str], required: str | None)
 def required_permission(path: str, method: str) -> str | None:
     """Map an admin request path to its minimum permission.
 
-    Keeping this mapping centralized means existing routes cannot accidentally
-    forget to add a permission dependency. The backend remains authoritative;
-    frontend visibility is only a convenience.
+    The mapping is centralized so existing routes cannot accidentally omit an
+    authorization check. Unclassified admin routes fail closed for members;
+    the environment-configured root owner retains wildcard access.
     """
     normalized = path.removeprefix("/api").removeprefix("/v1") or "/"
     method = method.upper()
@@ -104,8 +55,8 @@ def required_permission(path: str, method: str) -> str | None:
         if method == "DELETE":
             return "team:members:delete"
         return "team:members:write"
-    if normalized.startswith("/team/roles"):
-        return "team:roles:read" if method == "GET" else "team:roles:write"
+    if normalized.startswith("/team/permissions"):
+        return "team:members:read"
     if normalized.startswith("/lookups"):
         return "analytics:read"
     if normalized.startswith("/stats/") or normalized == "/events":
@@ -140,9 +91,6 @@ def required_permission(path: str, method: str) -> str | None:
         return "fallbacks:write"
     if normalized.startswith("/notifications"):
         return "notifications:read" if method == "GET" else "notifications:write"
-    # Every authenticated dashboard route must be explicitly classified. The
-    # wildcard owner can still use newly added routes, while regular members
-    # fail closed until a permission is deliberately assigned here.
     return "dashboard:unmapped"
 
 

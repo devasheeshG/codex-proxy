@@ -16,9 +16,8 @@ def test_overview_member_gets_analytics_without_management_access(client, admin_
         headers=admin_headers,
         json={
             "username": "viewer",
-            "display_name": "Overview Viewer",
             "password": password,
-            "role": "overview_viewer",
+            "permissions": ["analytics:read"],
         },
     )
     assert created.status_code == 201, created.text
@@ -26,7 +25,6 @@ def test_overview_member_gets_analytics_without_management_access(client, admin_
     headers = _login(client, "viewer", password)
     profile = client.get("/api/v1/auth/me", headers=headers)
     assert profile.status_code == 200
-    assert profile.json()["display_name"] == "Overview Viewer"
     assert profile.json()["permissions"] == ["analytics:read"]
     assert client.get("/api/v1/lookups/users", headers=headers).status_code == 200
     assert client.get("/api/v1/accounts", headers=headers).status_code == 403
@@ -42,9 +40,8 @@ def test_disabling_member_invalidates_existing_session(client, admin_headers):
         headers=admin_headers,
         json={
             "username": "operator",
-            "display_name": "Operator",
             "password": password,
-            "role": "operations_operator",
+            "permissions": ["accounts:read", "accounts:write", "analytics:read"],
         },
     )
     member_id = created.json()["member"]["id"]

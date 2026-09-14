@@ -13,14 +13,13 @@ from app.config import get_settings
 from app.utils.postgres import ApiKeyDb, DashboardMemberDb, UserDb, get_db
 
 from .keys import hash_key
-from .permissions import has_permission, required_permission, verify_password
+from .permissions import PERMISSIONS, has_permission, required_permission, verify_password
 from .tokens import decode_admin_token, verify_admin_credentials
 
 
 @dataclass(frozen=True)
 class AdminPrincipal:
     subject: str
-    display_name: str
     member_id: Optional[uuid.UUID]
     role: str
     permissions: frozenset[str]
@@ -31,7 +30,7 @@ def _principal_from_claims(claims: dict, db: Session) -> Optional[AdminPrincipal
     if not member_id:
         if claims.get("sub") == get_settings().ADMIN_USERNAME:
             subject = str(claims.get("sub"))
-            return AdminPrincipal(subject, subject, None, "owner", frozenset({"*"}))
+            return AdminPrincipal(subject, None, "owner", frozenset({"*"}))
         return None
     try:
         member = db.get(DashboardMemberDb, uuid.UUID(str(member_id)))
@@ -40,10 +39,11 @@ def _principal_from_claims(claims: dict, db: Session) -> Optional[AdminPrincipal
     if member is None or not member.active:
         return None
     try:
-        permissions = frozenset(json.loads(member.permissions_json or "[]"))
+        values = json.loads(member.permissions_json or "[]")
+        permissions = frozenset(value for value in values if value in PERMISSIONS) if isinstance(values, list) else frozenset()
     except (TypeError, ValueError):
         permissions = frozenset()
-    return AdminPrincipal(member.username, member.display_name, member.id, member.role, permissions)
+    return AdminPrincipal(member.username, member.id, "member", permissions)
 
 
 def require_admin_principal(

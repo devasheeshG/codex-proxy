@@ -1,4 +1,4 @@
-"""Dashboard team-member management routes."""
+"""Dashboard team-member management with explicit permission assignment."""
 
 from __future__ import annotations
 
@@ -25,14 +25,13 @@ router = APIRouter(tags=["Dashboard Team"], prefix="/team")
 
 def _member_response(member: DashboardMemberDb) -> DashboardMember:
     try:
-        permissions = sorted(json.loads(member.permissions_json or "[]"))
+        values = json.loads(member.permissions_json or "[]")
+        permissions = sorted({value for value in values if value in security.PERMISSIONS})
     except (TypeError, ValueError):
         permissions = []
     return DashboardMember(
         id=member.id,
         username=member.username,
-        display_name=member.display_name,
-        role=member.role,
         permissions=permissions,
         active=member.active,
         created_at=member.created_at,
@@ -40,27 +39,26 @@ def _member_response(member: DashboardMemberDb) -> DashboardMember:
     )
 
 
-def _validate_role(role: str) -> frozenset[str]:
-    if role == "owner" or role not in security.ROLE_PERMISSIONS:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unknown or reserved role")
-    return security.permissions_for_role(role)
+def _validate_permissions(values: list[str]) -> list[str]:
+    permissions = sorted({value.strip() for value in values if isinstance(value, str) and value.strip()})
+    unknown = sorted(set(permissions) - security.PERMISSIONS)
+    if unknown:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown permission(s): {', '.join(unknown)}",
+        )
+    if not permissions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Select at least one permission",
+        )
+    return permissions
 
 
-def _require_role_assignment(principal) -> None:
-    if "*" not in principal.permissions and "team:roles:write" not in principal.permissions:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Missing permission: team:roles:write")
-
-
-@router.get("/roles")
-def list_roles(_: object = Depends(security.require_admin_principal)) -> dict:  # noqa: B008
-    return {
-        "roles": [
-            {"id": role, "label": security.ROLE_LABELS[role], "permissions": sorted(permissions)}
-            for role, permissions in security.ROLE_PERMISSIONS.items()
-            if role != "owner"
-        ],
-        "permissions": sorted(security.PERMISSIONS),
-    }
+@router.get("/permissions")
+def list_permissions(_: object = Depends(security.require_admin_principal)) -> dict:  # noqa: B008
+    """Return the exact permission names available to assign."""
+    return {"permissions": sorted(security.PERMISSIONS)}
 
 
 @router.get("/members", response_model=ListDashboardMembersResponse)
@@ -75,27 +73,21 @@ def list_members(
 @router.post("/members", response_model=DashboardMemberResponse, status_code=status.HTTP_201_CREATED)
 def create_member(
     request: CreateDashboardMemberRequest,
-    principal=Depends(security.require_admin_principal),  # noqa: B008
+    _: object = Depends(security.require_admin_principal),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> DashboardMemberResponse:
-    _require_role_assignment(principal)
-    role_permissions = _validate_role(request.role)
     username = request.username.strip().lower()
-    display_name = request.display_name.strip()
     if username == get_settings().ADMIN_USERNAME.strip().lower():
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dashboard username is reserved")
-    if not display_name:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Display name is required")
     if db.query(DashboardMemberDb).filter(DashboardMemberDb.username == username).first() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Dashboard username already exists")
+    permissions = _validate_permissions(request.permissions)
     now = datetime.now(timezone.utc)
     member = DashboardMemberDb(
         id=uuid.uuid4(),
         username=username,
-        display_name=display_name,
         password_hash=security.hash_password(request.password),
-        role=request.role,
-        permissions_json=json.dumps(sorted(role_permissions), separators=(",", ":")),
+        permissions_json=json.dumps(permissions, separators=(",", ":")),
         active=True,
         created_at=now,
         updated_at=now,
@@ -115,16 +107,8 @@ def update_member(
     member = db.get(DashboardMemberDb, member_id)
     if member is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dashboard member not found")
-    if request.role is not None:
-        _require_role_assignment(principal)
-        role_permissions = _validate_role(request.role)
-        member.role = request.role
-        member.permissions_json = json.dumps(sorted(role_permissions), separators=(",", ":"))
-    if request.display_name is not None:
-        display_name = request.display_name.strip()
-        if not display_name:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Display name is required")
-        member.display_name = display_name
+    if request.permissions is not None:
+        member.permissions_json = json.dumps(_validate_permissions(request.permissions), separators=(",", ":"))
     if request.password is not None:
         member.password_hash = security.hash_password(request.password)
     if request.active is not None:

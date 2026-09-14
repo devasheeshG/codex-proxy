@@ -12,7 +12,7 @@ from app.utils.postgres.base import engine, init_database
 
 CANONICAL_REVISION = "001"
 LEGACY_EQUIVALENT_HEADS = frozenset({"0009", "002", "003", "004", "005", "006"})
-KNOWN_CHAIN_REVISIONS = frozenset({"001", "007"})
+KNOWN_CHAIN_REVISIONS = frozenset({"001", "007", "008", "009"})
 
 
 def normalize_legacy_head() -> None:

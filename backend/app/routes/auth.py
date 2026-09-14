@@ -1,6 +1,8 @@
 # Path: app/routes/auth.py
 # Description: Admin authentication route -- issues a session JWT for the dashboard.
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -37,11 +39,12 @@ def login(request: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
 
     member.last_login_at = datetime.now(timezone.utc)
     db.commit()
-    permissions = security.permissions_for_role(member.role)
+    values = json.loads(member.permissions_json or "[]")
+    permissions = frozenset(value for value in values if value in security.PERMISSIONS) if isinstance(values, list) else frozenset()
     token = security.issue_admin_token(
         subject=member.username,
         member_id=str(member.id),
-        role=member.role,
+        role="member",
         permissions=list(permissions),
     )
     logger.info("Dashboard team member logged in")
@@ -53,8 +56,6 @@ def profile(principal=Depends(security.require_admin_principal)) -> AuthProfileR
     """Return the effective dashboard permissions for the current session."""
     return AuthProfileResponse(
         username=principal.subject,
-        display_name=principal.display_name,
-        role=principal.role,
         permissions=sorted(principal.permissions),
         root="*" in principal.permissions,
     )

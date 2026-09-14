@@ -182,9 +182,7 @@ class DashboardMemberDb(DatabaseBase):
 
     id = Column(UUID(as_uuid=True), nullable=False)
     username = Column(VARCHAR(120), nullable=False)
-    display_name = Column(VARCHAR(200), nullable=False)
     password_hash = Column(Text, nullable=False)
-    role = Column(VARCHAR(64), nullable=False, default="read_only", server_default="read_only")
     permissions_json = Column(Text, nullable=False, default="[]", server_default="[]")
     active = Column(Boolean, nullable=False, default=True, server_default="true")
     created_at = Column(DateTime(timezone=True), nullable=False)
@@ -198,7 +196,7 @@ class DashboardMemberDb(DatabaseBase):
     )
 
     def __repr__(self):
-        return f"<DashboardMember(id={self.id}, username={self.username}, role={self.role})>"
+        return f"<DashboardMember(id={self.id}, username={self.username})>"
 
 
 class ProxyEventDb(DatabaseBase):
