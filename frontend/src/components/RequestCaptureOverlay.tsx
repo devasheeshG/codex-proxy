@@ -253,11 +253,24 @@ function extractResponseCards(body: string): Card[] {
         else if (type.endsWith("response.failed")) status.push("Failed");
     }
     const cards: Card[] = [];
-    if (assistant.join("").trim()) cards.push({ role: "assistant", content: assistant.join(""), images: [] });
-    for (const tool of tools.values()) cards.push({ role: "tool", label: tool.label, content: formatToolContent(tool.content), images: [] });
-    for (const message of status) cards.push({ role: "other", label: "Response status", content: message, images: [] });
+    if (assistant.join("").trim())
+        cards.push({ role: "assistant", content: assistant.join(""), images: [] });
+    for (const tool of tools.values())
+        cards.push({
+            role: "tool",
+            label: tool.label,
+            content: formatToolContent(tool.content),
+            images: [],
+        });
+    for (const message of status)
+        cards.push({ role: "other", label: "Response status", content: message, images: [] });
     if (!cards.length && records.length)
-        cards.push({ role: "other", label: "Response events", content: `${records.length} response events captured`, images: [] });
+        cards.push({
+            role: "other",
+            label: "Response events",
+            content: `${records.length} response events captured`,
+            images: [],
+        });
     return cards;
 }
 
@@ -295,7 +308,7 @@ function MarkdownContent({ children }: { children: string }) {
                     ),
                     code: ({ children: value, className }) =>
                         className ? (
-                    <code className="text-fog-200 block max-w-full overflow-x-auto break-words rounded-md bg-black/30 p-3 font-mono text-xs">
+                            <code className="text-fog-200 block max-w-full overflow-x-auto rounded-md bg-black/30 p-3 font-mono text-xs break-words">
                                 {value}
                             </code>
                         ) : (
@@ -304,7 +317,9 @@ function MarkdownContent({ children }: { children: string }) {
                             </code>
                         ),
                     pre: ({ children: value }) => (
-                        <pre className="my-3 max-w-full overflow-x-auto break-words whitespace-pre-wrap">{value}</pre>
+                        <pre className="my-3 max-w-full overflow-x-auto break-words whitespace-pre-wrap">
+                            {value}
+                        </pre>
                     ),
                     table: ({ children: value }) => (
                         <div className="my-3 overflow-x-auto">
@@ -361,13 +376,15 @@ function MessageCard({ card }: { card: Card }) {
                     ))}
                 </div>
             ) : null}
-            {card.content.trim() ? (codeOnly ? (
-                <pre className="text-fog-200 max-h-80 max-w-full overflow-auto font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
-                    {card.content}
-                </pre>
-            ) : (
-                <MarkdownContent>{card.content}</MarkdownContent>
-            )) : null}
+            {card.content.trim() ? (
+                codeOnly ? (
+                    <pre className="text-fog-200 max-h-80 max-w-full overflow-auto font-mono text-xs leading-relaxed break-all whitespace-pre-wrap">
+                        {card.content}
+                    </pre>
+                ) : (
+                    <MarkdownContent>{card.content}</MarkdownContent>
+                )
+            ) : null}
         </article>
     );
 }
@@ -378,7 +395,9 @@ function BodyView({ body, side }: { body: string; side: "request" | "response" }
             side === "request" ? extractRequestCards(parseJson(body)) : extractResponseCards(body),
         [body, side],
     );
-    const hasCards = cards.some((card) => card.content.trim().length > 0 || Boolean(card.images?.length));
+    const hasCards = cards.some(
+        (card) => card.content.trim().length > 0 || Boolean(card.images?.length),
+    );
     return (
         <div className="space-y-3">
             {hasCards ? (
@@ -468,13 +487,21 @@ export function RequestCaptureOverlay({
                         </div>
                         <div>
                             <span className="text-fog-500 block uppercase">Request</span>
-                            <span className={detail.request_available ? "text-good-400" : "text-bad-400"}>
+                            <span
+                                className={
+                                    detail.request_available ? "text-good-400" : "text-bad-400"
+                                }
+                            >
                                 {detail.request_available ? "Available" : "Unavailable"}
                             </span>
                         </div>
                         <div>
                             <span className="text-fog-500 block uppercase">Response</span>
-                            <span className={detail.response_available ? "text-good-400" : "text-bad-400"}>
+                            <span
+                                className={
+                                    detail.response_available ? "text-good-400" : "text-bad-400"
+                                }
+                            >
                                 {detail.response_available ? "Available" : "Unavailable"}
                             </span>
                         </div>
