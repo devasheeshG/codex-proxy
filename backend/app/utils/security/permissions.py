@@ -11,7 +11,7 @@ from typing import Final
 PERMISSIONS: Final[frozenset[str]] = frozenset(
     {
         "analytics:read",
-        "events:archive:read",
+        "analytics:events:archive:read",
         "accounts:read",
         "accounts:write",
         "accounts:delete",
@@ -31,6 +31,18 @@ PERMISSIONS: Final[frozenset[str]] = frozenset(
         "team:members:delete",
     }
 )
+
+LEGACY_PERMISSION_ALIASES: Final[dict[str, str]] = {
+    "events:archive:read": "analytics:events:archive:read",
+}
+
+
+def normalize_permissions(values: object) -> frozenset[str]:
+    """Return canonical permissions while preserving grants saved under old names."""
+    if not isinstance(values, (list, tuple, set, frozenset)):
+        return frozenset()
+    canonical = {LEGACY_PERMISSION_ALIASES.get(value.strip(), value.strip()) for value in values if isinstance(value, str) and value.strip()}
+    return frozenset(value for value in canonical if value in PERMISSIONS)
 
 
 def has_permission(permissions: set[str] | frozenset[str], required: str | None) -> bool:
@@ -62,7 +74,7 @@ def required_permission(path: str, method: str) -> str | None:
     if normalized.startswith("/stats/") or normalized == "/events":
         return "analytics:read"
     if normalized.startswith("/requests") or normalized.startswith("/archive"):
-        return "events:archive:read"
+        return "analytics:events:archive:read"
     if normalized.startswith("/accounts"):
         if method == "GET":
             return "accounts:read"

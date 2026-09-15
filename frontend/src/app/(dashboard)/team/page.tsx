@@ -17,7 +17,7 @@ type PermissionGroup = { label: string; permissions: string[] };
 
 const PERMISSION_GROUPS: PermissionGroup[] = [
     { label: "Analytics", permissions: ["analytics:read"] },
-    { label: "Events", permissions: ["events:archive:read"] },
+    { label: "Events", permissions: ["analytics:events:archive:read"] },
     {
         label: "Accounts",
         permissions: ["accounts:read", "accounts:write", "accounts:delete"],

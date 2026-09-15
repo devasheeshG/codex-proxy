@@ -26,7 +26,7 @@ router = APIRouter(tags=["Dashboard Team"], prefix="/team")
 def _member_response(member: DashboardMemberDb) -> DashboardMember:
     try:
         values = json.loads(member.permissions_json or "[]")
-        permissions = sorted({value for value in values if value in security.PERMISSIONS})
+        permissions = sorted(security.normalize_permissions(values))
     except (TypeError, ValueError):
         permissions = []
     return DashboardMember(
@@ -40,8 +40,9 @@ def _member_response(member: DashboardMemberDb) -> DashboardMember:
 
 
 def _validate_permissions(values: list[str]) -> list[str]:
-    permissions = sorted({value.strip() for value in values if isinstance(value, str) and value.strip()})
-    unknown = sorted(set(permissions) - security.PERMISSIONS)
+    requested = {value.strip() for value in values if isinstance(value, str) and value.strip()}
+    permissions = sorted(security.normalize_permissions(requested))
+    unknown = sorted(value for value in requested if not security.normalize_permissions([value]))
     if unknown:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

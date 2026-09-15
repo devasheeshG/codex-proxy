@@ -13,7 +13,7 @@ from app.config import get_settings
 from app.utils.postgres import ApiKeyDb, DashboardMemberDb, UserDb, get_db
 
 from .keys import hash_key
-from .permissions import PERMISSIONS, has_permission, required_permission, verify_password
+from .permissions import has_permission, normalize_permissions, required_permission, verify_password
 from .tokens import decode_admin_token, verify_admin_credentials
 
 
@@ -40,7 +40,7 @@ def _principal_from_claims(claims: dict, db: Session) -> Optional[AdminPrincipal
         return None
     try:
         values = json.loads(member.permissions_json or "[]")
-        permissions = frozenset(value for value in values if value in PERMISSIONS) if isinstance(values, list) else frozenset()
+        permissions = normalize_permissions(values)
     except (TypeError, ValueError):
         permissions = frozenset()
     return AdminPrincipal(member.username, member.id, "member", permissions)

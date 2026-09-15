@@ -40,7 +40,7 @@ def login(request: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     member.last_login_at = datetime.now(timezone.utc)
     db.commit()
     values = json.loads(member.permissions_json or "[]")
-    permissions = frozenset(value for value in values if value in security.PERMISSIONS) if isinstance(values, list) else frozenset()
+    permissions = security.normalize_permissions(values)
     token = security.issue_admin_token(
         subject=member.username,
         member_id=str(member.id),

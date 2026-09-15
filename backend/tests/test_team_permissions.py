@@ -53,3 +53,20 @@ def test_disabling_member_invalidates_existing_session(client, admin_headers):
     )
     assert disabled.status_code == 200
     assert client.get("/api/v1/auth/me", headers=headers).status_code == 401
+
+
+def test_legacy_archive_permission_is_returned_under_canonical_name(client, admin_headers):
+    created = client.post(
+        "/api/v1/team/members",
+        headers=admin_headers,
+        json={
+            "username": "archive-viewer",
+            "password": "member-password-123",
+            "permissions": ["events:archive:read"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["member"]["permissions"] == ["analytics:events:archive:read"]
+
+    headers = _login(client, "archive-viewer", "member-password-123")
+    assert client.get("/api/v1/auth/me", headers=headers).json()["permissions"] == ["analytics:events:archive:read"]
