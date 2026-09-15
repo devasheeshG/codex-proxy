@@ -13,6 +13,54 @@ import {
     TextInput,
 } from "@/components/ui";
 
+type PermissionGroup = { label: string; permissions: string[] };
+
+const PERMISSION_GROUPS: PermissionGroup[] = [
+    { label: "Analytics", permissions: ["analytics:read"] },
+    { label: "Events", permissions: ["events:archive:read"] },
+    {
+        label: "Accounts",
+        permissions: ["accounts:read", "accounts:write", "accounts:delete"],
+    },
+    {
+        label: "Proxy users",
+        permissions: ["proxy_users:read", "proxy_users:write", "proxy_users:delete"],
+    },
+    {
+        label: "API keys",
+        permissions: ["api_keys:read", "api_keys:write", "api_keys:delete"],
+    },
+    {
+        label: "Fallbacks",
+        permissions: ["fallbacks:read", "fallbacks:write", "fallbacks:delete"],
+    },
+    {
+        label: "Notifications",
+        permissions: ["notifications:read", "notifications:write"],
+    },
+    {
+        label: "Team members",
+        permissions: ["team:members:read", "team:members:write", "team:members:delete"],
+    },
+] as const;
+
+const PERMISSION_ORDER = new Map<string, number>(
+    PERMISSION_GROUPS.flatMap((group, groupIndex) =>
+        group.permissions.map((permission, permissionIndex) => [
+            permission,
+            groupIndex * 100 + permissionIndex,
+        ]),
+    ),
+);
+
+function sortPermissions(permissions: string[]) {
+    return [...permissions].sort(
+        (a, b) =>
+            (PERMISSION_ORDER.get(a) ?? Number.MAX_SAFE_INTEGER) -
+                (PERMISSION_ORDER.get(b) ?? Number.MAX_SAFE_INTEGER) || a.localeCompare(b),
+    );
+}
+
 function PermissionChecks({
     available,
     selected,
@@ -29,21 +77,43 @@ function PermissionChecks({
         else next.add(permission);
         onChange(available.filter((item) => next.has(item)));
     };
+    const knownPermissions = new Set<string>();
+    const groups = PERMISSION_GROUPS.map((group) => {
+        const permissions = group.permissions.filter((permission) => {
+            knownPermissions.add(permission);
+            return available.includes(permission);
+        });
+        return { ...group, permissions };
+    }).filter((group) => group.permissions.length > 0);
+    const otherPermissions = sortPermissions(
+        available.filter((permission) => !knownPermissions.has(permission)),
+    );
+    if (otherPermissions.length > 0) groups.push({ label: "Other", permissions: otherPermissions });
+
     return (
-        <div className="grid gap-2 sm:grid-cols-2">
-            {available.map((permission) => (
-                <label
-                    key={permission}
-                    className="border-ink-700 bg-ink-900/60 text-fog-200 hover:border-brand-400/60 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs"
-                >
-                    <input
-                        type="checkbox"
-                        checked={selectedSet.has(permission)}
-                        onChange={() => toggle(permission)}
-                        className="accent-brand-500 h-4 w-4"
-                    />
-                    <span className="font-mono break-all">{permission}</span>
-                </label>
+        <div className="space-y-4">
+            {groups.map((group) => (
+                <fieldset key={group.label}>
+                    <legend className="text-fog-400 mb-2 text-[11px] font-semibold tracking-wider uppercase">
+                        {group.label}
+                    </legend>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                        {group.permissions.map((permission) => (
+                            <label
+                                key={permission}
+                                className="border-ink-700 bg-ink-900/60 text-fog-200 hover:border-brand-400/60 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={selectedSet.has(permission)}
+                                    onChange={() => toggle(permission)}
+                                    className="accent-brand-500 h-4 w-4"
+                                />
+                                <span className="font-mono break-all">{permission}</span>
+                            </label>
+                        ))}
+                    </div>
+                </fieldset>
             ))}
         </div>
     );
@@ -289,14 +359,16 @@ export default function TeamPage() {
                                         </div>
                                     ) : (
                                         <div className="text-fog-400 flex flex-wrap gap-1.5 text-xs">
-                                            {member.permissions.map((permission) => (
-                                                <span
-                                                    key={permission}
-                                                    className="border-ink-700 bg-ink-900 rounded border px-2 py-1 font-mono"
-                                                >
-                                                    {permission}
-                                                </span>
-                                            ))}
+                                            {sortPermissions(member.permissions).map(
+                                                (permission) => (
+                                                    <span
+                                                        key={permission}
+                                                        className="border-ink-700 bg-ink-900 rounded border px-2 py-1 font-mono"
+                                                    >
+                                                        {permission}
+                                                    </span>
+                                                ),
+                                            )}
                                         </div>
                                     )}
                                 </div>
