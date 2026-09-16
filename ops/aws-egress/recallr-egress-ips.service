@@ -1,0 +1,13 @@
+[Unit]
+Description=Materialize EC2 secondary private IPs for Recallr egress relays
+Wants=network-online.target
+After=network-online.target
+Before=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/recallr-egress-ips
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

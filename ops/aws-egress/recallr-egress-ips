@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Materialize every EC2 ENI private IPv4 assignment inside Linux. AWS records
+# secondary addresses in the VPC control plane but does not add them to the
+# guest interface for this Debian image.
+
+set -euo pipefail
+
+metadata=http://169.254.169.254/latest
+token=$(curl -fsS -X PUT --connect-timeout 2 --max-time 4 \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' \
+  "$metadata/api/token")
+
+metadata_get() {
+  curl -fsS --connect-timeout 2 --max-time 4 \
+    -H "X-aws-ec2-metadata-token: $token" \
+    "$metadata/meta-data/$1"
+}
+
+while IFS= read -r mac; do
+  mac=${mac%/}
+  [[ -n "$mac" ]] || continue
+  interface=""
+  for address_file in /sys/class/net/*/address; do
+    if [[ "$(<"$address_file")" == "$mac" ]]; then
+      interface=${address_file%/address}
+      interface=${interface##*/}
+      break
+    fi
+  done
+  [[ -n "$interface" ]] || {
+    echo "No Linux interface found for EC2 MAC $mac" >&2
+    exit 1
+  }
+  cidr=$(metadata_get "network/interfaces/macs/$mac/subnet-ipv4-cidr-block")
+  prefix=${cidr#*/}
+  while IFS= read -r private_ip; do
+    [[ -n "$private_ip" ]] || continue
+    if ! ip -4 -o address show dev "$interface" | awk '{print $4}' | cut -d/ -f1 | grep -Fxq "$private_ip"; then
+      ip address add "$private_ip/$prefix" dev "$interface"
+      echo "Added EC2 private IP $private_ip/$prefix to $interface"
+    fi
+  done < <(metadata_get "network/interfaces/macs/$mac/local-ipv4s")
+done < <(metadata_get network/interfaces/macs/)

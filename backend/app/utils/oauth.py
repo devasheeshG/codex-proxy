@@ -13,6 +13,7 @@ from typing import Any, Dict, Mapping, Optional
 import httpx
 
 from app import config
+from app.utils import egress
 
 USAGE_PROBE_ATTEMPTS = 4
 _USAGE_PROBE_BACKOFF = (0.5, 1.0, 2.0)
@@ -142,9 +143,14 @@ def request_device_code() -> Dict[str, Any]:
     }
 
 
-def poll_device_code(device_auth_id: str, user_code: str) -> Dict[str, str]:
+def poll_device_code(
+    device_auth_id: str,
+    user_code: str,
+    *,
+    egress_target: egress.EgressTarget | None = None,
+) -> Dict[str, str]:
     """Poll once for device approval; raise DeviceAuthorizationPending while waiting."""
-    with httpx.Client(timeout=30.0) as client:
+    with egress.sync_client(egress_target, timeout=30.0) if egress_target else httpx.Client(timeout=30.0) as client:
         response = client.post(
             config.OAUTH_DEVICE_POLL_URL,
             json={"device_auth_id": device_auth_id, "user_code": user_code},
@@ -161,9 +167,14 @@ def poll_device_code(device_auth_id: str, user_code: str) -> Dict[str, str]:
     return data
 
 
-def exchange_device_code(device_auth_id: str, user_code: str) -> Dict[str, Any]:
+def exchange_device_code(
+    device_auth_id: str,
+    user_code: str,
+    *,
+    egress_target: egress.EgressTarget | None = None,
+) -> Dict[str, Any]:
     """Complete an approved device flow and return normalized Codex OAuth tokens."""
-    approved = poll_device_code(device_auth_id, user_code)
+    approved = poll_device_code(device_auth_id, user_code, egress_target=egress_target)
     body = {
         "grant_type": "authorization_code",
         "code": approved["authorization_code"],
@@ -171,7 +182,7 @@ def exchange_device_code(device_auth_id: str, user_code: str) -> Dict[str, Any]:
         "client_id": config.OAUTH_CLIENT_ID,
         "code_verifier": approved["code_verifier"],
     }
-    with httpx.Client(timeout=30.0) as client:
+    with egress.sync_client(egress_target, timeout=30.0) if egress_target else httpx.Client(timeout=30.0) as client:
         response = client.post(
             config.OAUTH_TOKEN_URL,
             data=body,
@@ -203,9 +214,9 @@ def _normalize_tokens(data: Mapping[str, Any], old_refresh_token: str = "") -> D
     }
 
 
-def refresh_access_token(refresh_token: str) -> Dict[str, Any]:
+def refresh_access_token(refresh_token: str, *, egress_target: egress.EgressTarget | None = None) -> Dict[str, Any]:
     """Refresh a ChatGPT OAuth token, preserving a non-rotated refresh token."""
-    with httpx.Client(timeout=30.0) as client:
+    with egress.sync_client(egress_target, timeout=30.0) if egress_target else httpx.Client(timeout=30.0) as client:
         response = client.post(
             config.OAUTH_TOKEN_URL,
             json={
@@ -330,9 +341,14 @@ def _probe_retry_delay(response: httpx.Response, prior_attempts: int) -> float:
     return min(delay, _USAGE_PROBE_MAX_SLEEP)
 
 
-def fetch_usage(access_token: str, account_id: str) -> Dict[str, Any]:
+def fetch_usage(
+    access_token: str,
+    account_id: str,
+    *,
+    egress_target: egress.EgressTarget | None = None,
+) -> Dict[str, Any]:
     """Fetch normalized five-hour/weekly Codex limits and reset-credit count."""
-    with httpx.Client(timeout=15.0) as client:
+    with egress.sync_client(egress_target, timeout=15.0) if egress_target else httpx.Client(timeout=15.0) as client:
         for attempt in range(USAGE_PROBE_ATTEMPTS):
             response = client.get(
                 config.OAUTH_USAGE_URL,
@@ -363,12 +379,13 @@ def fetch_model_catalog(
     *,
     client_version: str,
     is_fedramp: bool = False,
+    egress_target: egress.EgressTarget | None = None,
 ) -> Dict[str, Any]:
     """Fetch and validate the native Codex model catalog for one account."""
     headers = _account_headers(access_token, account_id)
     if is_fedramp:
         headers["X-OpenAI-Fedramp"] = "true"
-    with httpx.Client(timeout=30.0) as client:
+    with egress.sync_client(egress_target, timeout=30.0) if egress_target else httpx.Client(timeout=30.0) as client:
         response = client.get(
             f"{config.UPSTREAM_CODEX_BASE_URL}/models",
             params={"client_version": client_version},
@@ -381,8 +398,13 @@ def fetch_model_catalog(
     return data
 
 
-def list_reset_credits(access_token: str, account_id: str) -> Dict[str, Any]:
-    with httpx.Client(timeout=15.0) as client:
+def list_reset_credits(
+    access_token: str,
+    account_id: str,
+    *,
+    egress_target: egress.EgressTarget | None = None,
+) -> Dict[str, Any]:
+    with egress.sync_client(egress_target, timeout=15.0) if egress_target else httpx.Client(timeout=15.0) as client:
         response = client.get(
             config.OAUTH_RESET_CREDITS_URL,
             headers=_account_headers(access_token, account_id),
@@ -402,6 +424,7 @@ def consume_reset_credit(
     *,
     credit_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    egress_target: egress.EgressTarget | None = None,
 ) -> Dict[str, Any]:
     """Redeem one banked reset credit using an idempotent upstream request."""
     body: Dict[str, str] = {
@@ -409,7 +432,7 @@ def consume_reset_credit(
     }
     if credit_id:
         body["credit_id"] = credit_id
-    with httpx.Client(timeout=15.0) as client:
+    with egress.sync_client(egress_target, timeout=15.0) if egress_target else httpx.Client(timeout=15.0) as client:
         response = client.post(
             config.OAUTH_RESET_CONSUME_URL,
             json=body,

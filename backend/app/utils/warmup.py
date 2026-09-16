@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.logger import get_logger
-from app.utils import provider_health, rotation
+from app.utils import egress, provider_health, rotation
 from app.utils.models.api import AccountStatus, ProviderHealth
 from app.utils.postgres import AccountDb, get_db_cm
 
@@ -118,7 +118,7 @@ def _model_for(account: AccountDb) -> str:
     return preferred if preferred in models else (models[0] if models else preferred)
 
 
-def _send(account: AccountDb, access_token: str) -> httpx.Response:
+def _send(account: AccountDb, access_token: str, target: egress.EgressTarget) -> httpx.Response:
     if not account.chatgpt_account_id:
         raise provider_health.ProviderReauthenticationRequired("The account identity is incomplete. Re-authenticate this account.")
     body = {
@@ -135,7 +135,7 @@ def _send(account: AccountDb, access_token: str) -> httpx.Response:
     }
     if account.chatgpt_account_is_fedramp:
         headers["X-OpenAI-Fedramp"] = "true"
-    client = httpx.Client(timeout=httpx.Timeout(120.0, connect=15.0))
+    client = egress.sync_client(target, timeout=httpx.Timeout(120.0, connect=15.0))
     try:
         response = client.post(f"{config.UPSTREAM_CODEX_BASE_URL}/responses", json=body, headers=headers)
         response.read()
@@ -162,8 +162,9 @@ def _warm_one(db: Session, account: AccountDb, now: datetime) -> bool:
     account.warmup_next_at = None
     db.flush()
     try:
-        access_token = rotation.ensure_fresh_token(db, account)
-        response = _send(account, access_token)
+        target = egress.get_pool().resolve(account.egress_target_id)
+        access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
+        response = _send(account, access_token, target)
         rotation.update_quota_from_headers(account, response.headers)
         provider_health.mark_response(account, response)
         _mark_result(account, now, "success")

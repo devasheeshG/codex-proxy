@@ -95,6 +95,9 @@ class AccountDb(DatabaseBase):
     max_failover_attempts = Column(
         Integer, nullable=False, default=config.DEFAULT_MAX_FAILOVER_ATTEMPTS, server_default=str(config.DEFAULT_MAX_FAILOVER_ATTEMPTS)
     )  # accounts to try per request when starting on this one
+    # Null is normalized to the first enabled target. A value pins every
+    # upstream operation for this account to the stable configured target id.
+    egress_target_id = Column(VARCHAR(128), nullable=True)
     priority = Column(Integer, nullable=False, default=1)
     model_catalog_json = Column(Text, nullable=True)
     model_catalog_refreshed_at = Column(DateTime(timezone=True), nullable=True)

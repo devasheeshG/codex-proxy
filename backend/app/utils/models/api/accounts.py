@@ -48,6 +48,7 @@ class Account(BaseModel):
     rotation_threshold: float  # deprecated single-threshold alias
     cooldown_seconds: int  # rest period after a 429 with no usable retry-after
     max_failover_attempts: int  # accounts to try per request when starting on this one
+    egress_target_id: Optional[str]
     priority: int  # 1 is tried first; unavailable accounts fall through to the next priority
     total_spend_usd: float
     monthly_spend_usd: float
@@ -90,6 +91,7 @@ class Account(BaseModel):
             rotation_threshold=account_db.rotation_threshold,
             cooldown_seconds=account_db.cooldown_seconds,
             max_failover_attempts=account_db.max_failover_attempts,
+            egress_target_id=account_db.egress_target_id,
             priority=account_db.priority,
             total_spend_usd=round(total_spend_usd, 6),
             monthly_spend_usd=round(monthly_spend_usd, 6),
@@ -115,11 +117,28 @@ class UpdateAccountRequest(BaseModel):
     rotation_threshold: Optional[float] = Field(default=None, ge=0, le=1)
     cooldown_seconds: Optional[int] = Field(default=None, ge=1, le=86_400)
     max_failover_attempts: Optional[int] = Field(default=None, ge=1, le=100)
+    # Null is normalized to the first enabled target; an explicit id pins the account.
+    egress_target_id: Optional[str] = Field(default=None, max_length=128)
     priority: Optional[int] = Field(default=None, ge=1)
 
 
 class ListAccountsResponse(BaseModel):
     accounts: List[Account]
+
+
+class EgressTargetInfo(BaseModel):
+    id: str
+    label: str
+    kind: str
+    interface_name: Optional[str]
+    private_ip: Optional[str]
+    public_ip: Optional[str]
+    max_concurrency: int
+    enabled: bool
+
+
+class ListEgressTargetsResponse(BaseModel):
+    targets: List[EgressTargetInfo]
 
 
 class ReorderAccountsRequest(BaseModel):

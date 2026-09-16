@@ -1,0 +1,18 @@
+name: codex-proxy-egress
+
+# One host-network relay owns all configured listener ports. It is deliberately
+# deployed as a separate Compose project so blue/green application slots never
+# compete for host ports or interrupt active outbound streams.
+services:
+  relay:
+    build: ./backend
+    image: codex-proxy/backend:latest
+    command: uv run python -m app.scripts.egress_relay
+    network_mode: host
+    restart: unless-stopped
+    env_file: ./.env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:18080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

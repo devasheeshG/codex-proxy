@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.logger import get_logger
-from app.utils import crypto, notifications, oauth, provider_health, rotation, security, usage, warmup
+from app.utils import crypto, egress, notifications, oauth, provider_health, rotation, security, usage, warmup
 from app.utils.models.api import (
     Account,
     AccountResponse,
@@ -23,7 +23,9 @@ from app.utils.models.api import (
     BulkAccountPriorityRequest,
     ConsumeLimitResetRequest,
     ConsumeLimitResetResponse,
+    EgressTargetInfo,
     ListAccountsResponse,
+    ListEgressTargetsResponse,
     OAuthCompleteRequest,
     OAuthStartResponse,
     RateLimitResetCredit,
@@ -36,6 +38,15 @@ from app.utils.postgres import AccountDb, UsageRecordDb, get_db
 
 logger = get_logger()
 router = APIRouter(tags=["Accounts"], prefix="/accounts")
+
+
+@router.get("/egress-targets", response_model=ListEgressTargetsResponse)
+def list_egress_targets(
+    _: str = Depends(security.require_admin),  # noqa: B008
+) -> ListEgressTargetsResponse:
+    """List configured outbound paths for the per-account dashboard selector."""
+    return ListEgressTargetsResponse(targets=[EgressTargetInfo(**target.public_dict()) for target in egress.get_pool().targets()])
+
 
 _DEVICE_FLOW_TTL = timedelta(minutes=15)
 _LIMIT_RESET_MIN_WEEKLY_USAGE = 0.90
@@ -208,7 +219,7 @@ def _flow_token(device: dict) -> str:
     return crypto.encrypt(json.dumps(payload, separators=(",", ":")))
 
 
-def _tokens_from_flow(flow_token: str) -> dict:
+def _tokens_from_flow(flow_token: str, *, egress_target: egress.EgressTarget | None = None) -> dict:
     try:
         payload = json.loads(crypto.decrypt(flow_token))
         issued_at = datetime.fromisoformat(str(payload["issued_at"]).replace("Z", "+00:00"))
@@ -216,7 +227,11 @@ def _tokens_from_flow(flow_token: str) -> dict:
             issued_at = issued_at.replace(tzinfo=timezone.utc)
         if datetime.now(timezone.utc) - issued_at > _DEVICE_FLOW_TTL:
             raise ValueError("Device authorization expired; start a new login")
-        return oauth.exchange_device_code(payload["device_auth_id"], payload["user_code"])
+        return oauth.exchange_device_code(
+            payload["device_auth_id"],
+            payload["user_code"],
+            egress_target=egress_target,
+        )
     except oauth.DeviceAuthorizationPending as exc:
         raise HTTPException(status_code=425, detail="Waiting for device authorization") from exc
     except HTTPException:
@@ -250,12 +265,25 @@ def _apply_tokens(account: AccountDb, tokens: dict, *, workspace_name: str | Non
     account.updated_at = datetime.now(timezone.utc)
 
 
-def _probe_account(account: AccountDb, access_token: str) -> bool:
+def _account_egress_target(account: AccountDb) -> egress.EgressTarget:
+    return egress.get_pool().resolve(account.egress_target_id)
+
+
+def _probe_account(
+    account: AccountDb,
+    access_token: str,
+    *,
+    egress_target: egress.EgressTarget | None = None,
+) -> bool:
     if not account.chatgpt_account_id:
         raise provider_health.ProviderReauthenticationRequired("The account identity is incomplete. Re-authenticate this account.")
     limit_reached = rotation.apply_usage_probe(
         account,
-        oauth.fetch_usage(access_token, account.chatgpt_account_id),
+        oauth.fetch_usage(
+            access_token,
+            account.chatgpt_account_id,
+            **egress.provider_call_kwargs(egress_target),
+        ),
     )
     provider_health.mark_success(account)
     return limit_reached
@@ -349,7 +377,8 @@ def complete_oauth(
     if not label:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Label is required")
 
-    tokens = _tokens_from_flow(request.flow_token)
+    target = egress.get_pool().resolve(None)
+    tokens = _tokens_from_flow(request.flow_token, egress_target=target)
     _assert_unique_identity(db, tokens)
     workspace_name = _workspace_name_for_tokens(db, tokens, requested_name=request.workspace_name)
     now = datetime.now(timezone.utc)
@@ -373,13 +402,14 @@ def complete_oauth(
         rotation_threshold=config.DEFAULT_ROTATION_THRESHOLD,
         cooldown_seconds=config.DEFAULT_COOLDOWN_SECONDS,
         max_failover_attempts=config.DEFAULT_MAX_FAILOVER_ATTEMPTS,
+        egress_target_id=target.id,
         priority=_next_priority(db),
         created_at=now,
         updated_at=now,
     )
     limit_reached = False
     try:
-        limit_reached = _probe_account(account, tokens["access_token"])
+        limit_reached = _probe_account(account, tokens["access_token"], egress_target=target)
     except Exception as exc:  # noqa: BLE001
         provider_health.mark_failure(account, exc)
         logger.warning("Initial quota probe failed for newly authorized account")
@@ -408,13 +438,14 @@ def reauth_account(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> AccountResponse:
     account = _account_or_404(db, account_id)
-    tokens = _tokens_from_flow(request.flow_token)
+    target = _account_egress_target(account)
+    tokens = _tokens_from_flow(request.flow_token, egress_target=target)
     _assert_unique_identity(db, tokens, exclude_account_id=account.id)
     workspace_name = _workspace_name_for_tokens(db, tokens, current_account=account)
     _apply_tokens(account, tokens, workspace_name=workspace_name)
     limit_reached = False
     try:
-        limit_reached = _probe_account(account, tokens["access_token"])
+        limit_reached = _probe_account(account, tokens["access_token"], egress_target=target)
     except Exception as exc:  # noqa: BLE001
         provider_health.mark_failure(account, exc)
         logger.warning("Quota probe failed after re-authenticating account %s", account.label)
@@ -475,6 +506,17 @@ def update_account(
         account.cooldown_seconds = request.cooldown_seconds
     if request.max_failover_attempts is not None:
         account.max_failover_attempts = request.max_failover_attempts
+    pool = egress.get_pool()
+    if "egress_target_id" in request.model_fields_set:
+        target_id = request.egress_target_id or pool.default_target().id
+        if not pool.has_target(target_id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Egress target '{target_id}' is not configured or enabled",
+            )
+        account.egress_target_id = target_id
+    elif account.egress_target_id is None:
+        account.egress_target_id = pool.default_target().id
     if request.priority is not None:
         # Priority levels are intentionally non-unique; editing one account
         # must not renumber every other account in the pool.
@@ -493,8 +535,9 @@ def refresh_quota(
 ) -> AccountResponse:
     account = _account_or_404(db, account_id)
     try:
-        access_token = rotation.ensure_fresh_token(db, account)
-        limit_reached = _probe_account(account, access_token)
+        target = _account_egress_target(account)
+        access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
+        limit_reached = _probe_account(account, access_token, egress_target=target)
     except provider_health.ProviderReauthenticationRequired as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:
@@ -545,10 +588,15 @@ def list_limit_resets(
 ) -> RateLimitResetCreditsResponse:
     account = _account_or_404(db, account_id)
     try:
-        access_token = rotation.ensure_fresh_token(db, account)
+        target = _account_egress_target(account)
+        access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
         if not account.chatgpt_account_id:
             raise provider_health.ProviderReauthenticationRequired("The account identity is incomplete. Re-authenticate this account.")
-        data = oauth.list_reset_credits(access_token, account.chatgpt_account_id)
+        data = oauth.list_reset_credits(
+            access_token,
+            account.chatgpt_account_id,
+            **egress.provider_call_kwargs(target),
+        )
         provider_health.mark_success(account)
     except provider_health.ProviderReauthenticationRequired as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
@@ -571,8 +619,9 @@ def consume_limit_reset(
     """Redeem one real banked reset credit; this never mutates quota locally."""
     account = _account_or_404(db, account_id)
     try:
-        access_token = rotation.ensure_fresh_token(db, account)
-        _probe_account(account, access_token)
+        target = _account_egress_target(account)
+        access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
+        _probe_account(account, access_token, egress_target=target)
         db.commit()
     except provider_health.ProviderReauthenticationRequired as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
@@ -588,7 +637,11 @@ def consume_limit_reset(
         try:
             if not account.chatgpt_account_id:
                 raise provider_health.ProviderReauthenticationRequired("The account identity is incomplete. Re-authenticate this account.")
-            reset_data = oauth.list_reset_credits(access_token, account.chatgpt_account_id)
+            reset_data = oauth.list_reset_credits(
+                access_token,
+                account.chatgpt_account_id,
+                **egress.provider_call_kwargs(target),
+            )
             reset_credits = RateLimitResetCreditsResponse.model_validate(reset_data).credits
         except provider_health.ProviderReauthenticationRequired as exc:
             raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
@@ -611,13 +664,14 @@ def consume_limit_reset(
     try:
         if not account.chatgpt_account_id:
             raise provider_health.ProviderReauthenticationRequired("The account identity is incomplete. Re-authenticate this account.")
-        result = oauth.consume_reset_credit(
-            access_token,
-            account.chatgpt_account_id,
-            credit_id=credit_id,
-            idempotency_key=request.idempotency_key,
-        )
-        _probe_account(account, access_token)
+        consume_kwargs = {
+            "credit_id": credit_id,
+            "idempotency_key": request.idempotency_key,
+        }
+        if egress.provider_call_kwargs(target):
+            consume_kwargs["egress_target"] = target
+        result = oauth.consume_reset_credit(access_token, account.chatgpt_account_id, **consume_kwargs)
+        _probe_account(account, access_token, egress_target=target)
     except provider_health.ProviderReauthenticationRequired as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     except httpx.HTTPStatusError as exc:

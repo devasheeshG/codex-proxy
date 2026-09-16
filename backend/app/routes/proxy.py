@@ -22,6 +22,7 @@ from app.routes.me import build_pool_status
 from app.utils import (
     account_limiter,
     chat_completions,
+    egress,
     events,
     notifications,
     openai_fallbacks,
@@ -110,8 +111,9 @@ def _recover_exhausted_accounts_with_cached_credits(db: Session) -> None:
     """Restore exhausted accounts before availability filtering hides them."""
     for account in rotation.weekly_reset_recovery_candidates(db):
         try:
-            access_token = rotation.ensure_fresh_token(db, account)
-            if rotation.auto_redeem_weekly_reset(db, account, access_token):
+            target = egress.get_pool().resolve(account.egress_target_id)
+            access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
+            if rotation.auto_redeem_weekly_reset(db, account, access_token, egress_target=target):
                 logger.info("Automatically redeemed a weekly limit reset for pooled account %s", account.label)
         except Exception:  # noqa: BLE001
             # Release a possible row lock and leave the remaining accounts
@@ -726,7 +728,7 @@ def _restore_requested_model_in_error(
 
 
 async def _send_candidate(
-    client: httpx.AsyncClient,
+    connection: egress.EgressConnection,
     request: Request,
     body: bytes,
     upstream_url: str,
@@ -739,16 +741,17 @@ async def _send_candidate(
         getattr(request.state, "user_priority", 1),
     )
     headers = _upstream_headers(request.headers, access_token, account)
-    upstream_request = client.build_request(
+    upstream_request = connection.client.build_request(
         request.method,
         upstream_url,
         headers=headers,
         content=body,
     )
     try:
-        candidate = await _prepare_candidate(await client.send(upstream_request, stream=True))
+        candidate = await _prepare_candidate(await connection.client.send(upstream_request, stream=True))
     except Exception:
         lease.release()
+        await connection.aclose()
         raise
     original_aclose = candidate.aclose
 
@@ -757,8 +760,10 @@ async def _send_candidate(
             await original_aclose()
         finally:
             lease.release()
+            await connection.aclose()
 
     candidate.aclose = close_with_lease
+    candidate.extensions["proxy_egress_target"] = connection.target
     return candidate
 
 
@@ -769,7 +774,7 @@ def _fallback_headers(incoming: Mapping[str, str], provider: OpenAIFallbackDb) -
 
 
 async def _send_fallback_candidate(
-    client: httpx.AsyncClient,
+    connection: egress.EgressConnection,
     request: Request,
     body: bytes,
     upstream_path: str,
@@ -783,16 +788,17 @@ async def _send_fallback_candidate(
     url = openai_fallbacks.endpoint(provider, upstream_path)
     if request.url.query:
         url = f"{url}?{request.url.query}"
-    upstream_request = client.build_request(
+    upstream_request = connection.client.build_request(
         request.method,
         url,
         headers=_fallback_headers(request.headers, provider),
         content=body,
     )
     try:
-        candidate = await _prepare_candidate(await client.send(upstream_request, stream=True))
+        candidate = await _prepare_candidate(await connection.client.send(upstream_request, stream=True))
     except Exception:
         lease.release()
+        await connection.aclose()
         raise
     original_aclose = candidate.aclose
 
@@ -801,9 +807,70 @@ async def _send_fallback_candidate(
             await original_aclose()
         finally:
             lease.release()
+            await connection.aclose()
 
     candidate.aclose = close_with_lease
+    candidate.extensions["proxy_egress_target"] = connection.target
     return candidate
+
+
+async def _send_account_candidate(
+    db: Session,
+    connection_request: Request,
+    body: bytes,
+    upstream_url: str,
+    account,
+    *,
+    force_refresh: bool = False,
+) -> httpx.Response:
+    """Open one account request through that account's configured egress target."""
+    connection = egress.get_pool().acquire(
+        account.egress_target_id,
+        priority=getattr(connection_request.state, "user_priority", 1),
+    )
+    try:
+        access_token = rotation.ensure_fresh_token(
+            db,
+            account,
+            force_refresh=force_refresh,
+            egress_target=connection.target,
+        )
+        db.commit()
+        return await _send_candidate(
+            connection,
+            connection_request,
+            body,
+            upstream_url,
+            access_token,
+            account,
+        )
+    except Exception:
+        await connection.aclose()
+        raise
+
+
+async def _send_fallback_with_egress(
+    connection_request: Request,
+    body: bytes,
+    upstream_path: str,
+    provider: OpenAIFallbackDb,
+) -> httpx.Response:
+    """Send a pay-as-you-go fallback through an automatically selected target."""
+    connection = egress.get_pool().acquire(
+        None,
+        priority=getattr(connection_request.state, "user_priority", 1),
+    )
+    try:
+        return await _send_fallback_candidate(
+            connection,
+            connection_request,
+            body,
+            upstream_path,
+            provider,
+        )
+    except Exception:
+        await connection.aclose()
+        raise
 
 
 def _fallback_retry_after(response: httpx.Response, default: int = 60) -> int:
@@ -1012,7 +1079,6 @@ async def proxy_responses(
     # any account with a known reset credit a chance to recover first.
     _recover_exhausted_accounts_with_cached_credits(db)
 
-    client = httpx.AsyncClient(timeout=httpx.Timeout(600.0, connect=15.0))
     excluded: Set[uuid.UUID] = set()
     response: Optional[httpx.Response] = None
     chosen_id: Optional[uuid.UUID] = None
@@ -1032,39 +1098,34 @@ async def proxy_responses(
         _emit_event(request, "account.attempt", user_id=user.id, api_key_id=key.id, account_id=account.id, metadata={"priority": account.priority})
 
         try:
-            access_token = rotation.ensure_fresh_token(db, account)
-            db.commit()
-            candidate = await _send_candidate(
-                client,
-                request,
-                body,
-                upstream_url,
-                access_token,
-                account,
-            )
+            candidate = await _send_account_candidate(db, request, body, upstream_url, account)
 
             # A token can be revoked before its JWT expiry. Refresh once and
             # retry this account before failing over.
             if candidate.status_code == 401:
                 await candidate.aclose()
-                access_token = rotation.ensure_fresh_token(db, account, force_refresh=True)
-                candidate = await _send_candidate(
-                    client,
+                candidate = await _send_account_candidate(
+                    db,
                     request,
                     body,
                     upstream_url,
-                    access_token,
                     account,
+                    force_refresh=True,
                 )
                 if candidate.status_code == 401:
                     await candidate.aclose()
                     provider_health.persist_failure(db, account.id, provider_health.reauthentication_error())
                     excluded.add(account.id)
                     continue
-        except account_limiter.AccountBusy:
-            logger.info("Pooled account %s is at its in-flight request ceiling; trying the next account", account.label)
+        except (account_limiter.AccountBusy, egress.EgressUnavailable) as exc:
+            logger.info("Pooled account %s cannot acquire request capacity: %s", account.label, exc)
             _emit_event(
-                request, "account.busy", user_id=user.id, api_key_id=key.id, account_id=account.id, message="Per-account concurrency ceiling reached"
+                request,
+                "account.busy",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                message=str(exc),
             )
             excluded.add(account.id)
             continue
@@ -1114,20 +1175,20 @@ async def proxy_responses(
         quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
         if (account.weekly_used_pct or 0) >= 1.0:
             try:
-                redeemed = rotation.auto_redeem_weekly_reset(db, account, access_token)
+                target = candidate.extensions.get("proxy_egress_target")
+                access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
+                redeemed = rotation.auto_redeem_weekly_reset(
+                    db,
+                    account,
+                    access_token,
+                    egress_target=target,
+                )
             except Exception:  # noqa: BLE001
                 logger.exception("Automatic weekly limit reset failed for pooled account %s", account.label)
                 redeemed = False
             if redeemed and quota_failure:
                 await candidate.aclose()
-                candidate = await _send_candidate(
-                    client,
-                    request,
-                    body,
-                    upstream_url,
-                    access_token,
-                    account,
-                )
+                candidate = await _send_account_candidate(db, request, body, upstream_url, account)
                 reached_type = rotation.update_quota_from_headers(account, candidate.headers)
         provider_health.mark_response(account, candidate)
         if reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
@@ -1207,8 +1268,7 @@ async def proxy_responses(
             break
         _emit_event(request, "fallback.attempt", user_id=user.id, api_key_id=key.id, fallback_provider_id=fallback.id)
         try:
-            candidate = await _send_fallback_candidate(
-                client,
+            candidate = await _send_fallback_with_egress(
                 request,
                 fallback_body,
                 upstream_path,
@@ -1367,7 +1427,6 @@ async def proxy_responses(
     if convert_stream_to_response and response_status < 400:
         raw = await response.aread()
         await response.aclose()
-        await client.aclose()
         accumulator = usage.StreamUsageAccumulator(
             fallback_model=request_model,
             reasoning_level=request_reasoning,
@@ -1457,7 +1516,6 @@ async def proxy_responses(
                     yield translated
             finally:
                 await response.aclose()
-                await client.aclose()
                 _record_usage_safe(
                     key.user_id,
                     key.id,
@@ -1481,7 +1539,6 @@ async def proxy_responses(
     if "text/event-stream" not in content_type and not (client_requested_stream and response_status < 400):
         raw = await response.aread()
         await response.aclose()
-        await client.aclose()
         raw = _restore_requested_model_in_error(raw, response_status, requested_model, request_model)
         parsed_usage = usage.Usage(
             model=request_model,
@@ -1540,7 +1597,6 @@ async def proxy_responses(
                 yield chunk
         finally:
             await response.aclose()
-            await client.aclose()
             captured_usage = accumulator.result()
             if captured_usage.input_tokens == 0 and captured_usage.output_tokens == 0:
                 logger.warning(

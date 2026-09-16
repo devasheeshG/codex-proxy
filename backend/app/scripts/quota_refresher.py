@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from app import config
 from app.logger import configure_logging, get_logger
-from app.utils import notifications, oauth, provider_health, rotation
+from app.utils import egress, notifications, oauth, provider_health, rotation
 from app.utils.models.api import ProviderHealth as ProviderHealthEnum
 from app.utils.postgres import AccountDb, get_db_cm
 
@@ -29,15 +29,25 @@ def refresh_once() -> None:
             if account.provider_health == ProviderHealthEnum.REAUTH_REQUIRED:
                 continue
             try:
-                access_token = rotation.ensure_fresh_token(db, account)
+                target = egress.get_pool().resolve(account.egress_target_id)
+                access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
                 if not account.chatgpt_account_id:
                     raise provider_health.ProviderReauthenticationRequired("The account identity is incomplete. Re-authenticate this account.")
                 limit_reached = rotation.apply_usage_probe(
                     account,
-                    oauth.fetch_usage(access_token, account.chatgpt_account_id),
+                    oauth.fetch_usage(
+                        access_token,
+                        account.chatgpt_account_id,
+                        **egress.provider_call_kwargs(target),
+                    ),
                 )
                 if (account.weekly_used_pct or 0) >= 1.0:
-                    redeemed = rotation.auto_redeem_weekly_reset(db, account, access_token)
+                    redeemed = rotation.auto_redeem_weekly_reset(
+                        db,
+                        account,
+                        access_token,
+                        egress_target=target,
+                    )
                     if redeemed:
                         # auto_redeem_weekly_reset refreshes the authoritative
                         # usage state after redemption. Avoid notifying from the

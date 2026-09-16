@@ -5,7 +5,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Mapping, Optional, Set
+from typing import TYPE_CHECKING, Dict, Mapping, Optional, Set
 
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,17 @@ from app import config
 from app.utils import crypto, oauth, provider_health
 from app.utils.models.api import AccountStatus, ProviderHealth
 from app.utils.postgres import AccountDb, UserDb
+
+if TYPE_CHECKING:
+    from app.utils.egress import EgressTarget
+
+
+def _provider_call_kwargs(egress_target: "EgressTarget | None") -> dict:
+    """Keep the default direct path compatible with provider-call adapters."""
+    if egress_target is None or egress_target.kind == "direct":
+        return {}
+    return {"egress_target": egress_target}
+
 
 # Values currently emitted by the Codex backend when a limit cannot serve more
 # traffic. HTTP 429 is still the primary failover signal.
@@ -225,7 +236,13 @@ def select_account(
     return chosen
 
 
-def ensure_fresh_token(db: Session, account: AccountDb, *, force_refresh: bool = False) -> str:
+def ensure_fresh_token(
+    db: Session,
+    account: AccountDb,
+    *,
+    force_refresh: bool = False,
+    egress_target: "EgressTarget | None" = None,
+) -> str:
     """Return a usable access token, serializing refresh-token rotation in the database.
 
     ``force_refresh`` is used after an upstream 401.  The provider can revoke an
@@ -264,7 +281,10 @@ def ensure_fresh_token(db: Session, account: AccountDb, *, force_refresh: bool =
 
     try:
         refresh_plain = crypto.decrypt(locked.refresh_token_enc)
-        tokens = oauth.refresh_access_token(refresh_plain)
+        if egress_target is None:
+            tokens = oauth.refresh_access_token(refresh_plain)
+        else:
+            tokens = oauth.refresh_access_token(refresh_plain, **_provider_call_kwargs(egress_target))
     except Exception as exc:
         health = provider_health.persist_failure(
             db,
@@ -399,7 +419,13 @@ def _reset_credit_expiry(raw: object) -> Optional[datetime]:
     return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
 
 
-def auto_redeem_weekly_reset(db: Session, account: AccountDb, access_token: str) -> bool:
+def auto_redeem_weekly_reset(
+    db: Session,
+    account: AccountDb,
+    access_token: str,
+    *,
+    egress_target: "EgressTarget | None" = None,
+) -> bool:
     """Redeem the earliest-expiring available credit once a weekly window is full."""
     if account.weekly_used_pct is None or account.weekly_used_pct < 1.0 or not account.chatgpt_account_id:
         return False
@@ -422,13 +448,20 @@ def auto_redeem_weekly_reset(db: Session, account: AccountDb, access_token: str)
     # was sent but before we acquired the lock. Verify the provider's current
     # window while holding the lock so a stale 100% response cannot spend the
     # next credit too.
-    apply_usage_probe(locked, oauth.fetch_usage(access_token, locked.chatgpt_account_id))
+    apply_usage_probe(
+        locked,
+        oauth.fetch_usage(access_token, locked.chatgpt_account_id, **_provider_call_kwargs(egress_target)),
+    )
     if locked.weekly_used_pct is None or locked.weekly_used_pct < 1.0:
         db.commit()
         return False
 
     now = datetime.now(timezone.utc)
-    reset_data = oauth.list_reset_credits(access_token, locked.chatgpt_account_id)
+    reset_data = oauth.list_reset_credits(
+        access_token,
+        locked.chatgpt_account_id,
+        **_provider_call_kwargs(egress_target),
+    )
     locked.reset_credits_available = int(reset_data.get("available_count") or 0)
     candidates = []
     for credit in reset_data.get("credits") or []:
@@ -451,8 +484,13 @@ def auto_redeem_weekly_reset(db: Session, account: AccountDb, access_token: str)
         locked.chatgpt_account_id,
         credit_id=credit_id,
         idempotency_key=redeem_request_id,
+        **_provider_call_kwargs(egress_target),
     )
-    refreshed = oauth.fetch_usage(access_token, locked.chatgpt_account_id)
+    refreshed = oauth.fetch_usage(
+        access_token,
+        locked.chatgpt_account_id,
+        **_provider_call_kwargs(egress_target),
+    )
     apply_usage_probe(locked, refreshed)
     locked.updated_at = datetime.now(timezone.utc)
     db.commit()

@@ -32,6 +32,9 @@ os.environ.update(
         # Tests use an ephemeral database and do not require the operator's
         # live MinIO archive.
         "ARCHIVE_ENABLED": "false",
+        # Keep the hermetic suite on the historical direct network path even
+        # when the operator's production .env is present in the checkout.
+        "EGRESS_TARGETS_JSON": "",
     }
 )
 

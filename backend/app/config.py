@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     DEFAULT_KEY_RATE_LIMIT_PER_MINUTE: int = 0
     MAX_CONCURRENT_REQUESTS_PER_ACCOUNT: int = DEFAULT_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT
     CODEX_CLIENT_VERSION: str = DEFAULT_CODEX_CLIENT_VERSION
+    # JSON array of approved outbound paths. An empty value preserves the
+    # historical direct server route. See README for proxy/local target shapes.
+    EGRESS_TARGETS_JSON: str = ""
+    DEFAULT_EGRESS_MAX_CONCURRENCY: int = 32
+    EGRESS_RELAY_USERNAME: str = "recallr"
+    EGRESS_RELAY_TOKEN: str = ""
 
     # Immutable request/response capture. Hot-tier bodies are raw JSON; the
     # retention sidecar moves expired bodies into a persistent Borg repository.
