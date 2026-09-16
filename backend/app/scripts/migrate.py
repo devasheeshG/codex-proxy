@@ -17,15 +17,25 @@ KNOWN_CHAIN_REVISIONS = frozenset({"001", "007", "008", "009", "010", "011"})
 
 
 def normalize_legacy_head() -> None:
-    """Stamp known pre-squash heads to the single canonical revision."""
+    """Stamp every recognized historical head to the single canonical revision.
+
+    The historical revision files are intentionally removed after the squash,
+    so this normalization must run before Alembic resolves the current head.
+    """
     init_database()
     with engine.begin() as connection:
         if not inspect(connection).has_table("alembic_version"):
             return
         revisions = connection.execute(text("SELECT version_num FROM alembic_version FOR UPDATE")).scalars().all()
-        if len(revisions) == 1 and revisions[0] in KNOWN_CHAIN_REVISIONS:
+        recognized_revisions = KNOWN_CHAIN_REVISIONS | LEGACY_EQUIVALENT_HEADS
+        if len(revisions) == 1 and revisions[0] in recognized_revisions:
+            if revisions[0] != CANONICAL_REVISION:
+                connection.execute(
+                    text("UPDATE alembic_version SET version_num = :canonical WHERE version_num = :legacy"),
+                    {"canonical": CANONICAL_REVISION, "legacy": revisions[0]},
+                )
             return
-        if len(revisions) != 1 or revisions[0] not in LEGACY_EQUIVALENT_HEADS:
+        if len(revisions) != 1 or revisions[0] not in recognized_revisions:
             rendered = ", ".join(revisions) if revisions else "empty"
             raise RuntimeError(
                 f"Unsupported Alembic state ({rendered}); expected one of "

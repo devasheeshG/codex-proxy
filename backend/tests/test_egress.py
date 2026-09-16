@@ -14,9 +14,7 @@ def test_empty_config_preserves_direct_network_path():
 
 
 def test_unassigned_requests_use_first_enabled_target_without_rotation():
-    targets = egress.parse_targets(
-        '[{"id":"first","kind":"direct"},{"id":"second","kind":"direct"}]'
-    )
+    targets = egress.parse_targets('[{"id":"first","kind":"direct"},{"id":"second","kind":"direct"}]')
     pool = egress.EgressPool(targets)
 
     assert pool.default_target().id == "first"

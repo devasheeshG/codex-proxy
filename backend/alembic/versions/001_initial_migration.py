@@ -47,6 +47,9 @@ def upgrade() -> None:
         sa.Column("chatgpt_account_user_id", sa.VARCHAR(), nullable=True),
         sa.Column("chatgpt_user_id", sa.VARCHAR(), nullable=True),
         sa.Column("workspace_name", sa.VARCHAR(length=200), nullable=True),
+        # Stable outbound route selected for this account; null uses the
+        # configured default target.
+        sa.Column("egress_target_id", sa.VARCHAR(length=128), nullable=True),
         sa.Column("authenticated_override", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("chatgpt_account_is_fedramp", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("access_token_enc", sa.Text(), nullable=False),
@@ -133,6 +136,21 @@ def upgrade() -> None:
     op.create_index("ix_users_name", "users", ["name"])
 
     op.create_table(
+        "dashboard_members",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("username", sa.VARCHAR(length=120), nullable=False),
+        sa.Column("password_hash", sa.Text(), nullable=False),
+        sa.Column("permissions_json", sa.Text(), nullable=False, server_default="[]"),
+        sa.Column("active", sa.Boolean(), nullable=False, server_default="true"),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
+        sa.PrimaryKeyConstraint("id", name="pk_dashboard_members_id"),
+        sa.UniqueConstraint("username", name="uq_dashboard_members_username"),
+    )
+    op.create_index("ix_dashboard_members_active", "dashboard_members", ["active"])
+
+    op.create_table(
         "api_keys",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("user_id", sa.UUID(), nullable=False),
@@ -168,6 +186,7 @@ def upgrade() -> None:
         sa.Column("monthly_spend_limit_usd", sa.Float(), nullable=True),
         sa.Column("model_catalog_json", sa.Text(), nullable=True),
         sa.Column("model_catalog_refreshed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("egress_target_id", sa.VARCHAR(length=128), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
@@ -311,6 +330,7 @@ def downgrade() -> None:
     op.drop_table("proxy_events")
     op.drop_table("usage_records")
     op.drop_table("openai_fallbacks")
+    op.drop_table("dashboard_members")
     op.drop_table("api_keys")
     op.drop_table("users")
     op.drop_table("accounts")
