@@ -336,3 +336,30 @@ context.
 
 [AGPL-3.0](LICENSE). If you run a modified version as a network service, make
 the corresponding source available to its users.
+
+## Per-account egress IPs
+
+The proxy can use several approved public egress IPs from one EC2 instance. AWS
+assigns each secondary private address to the existing ENI and an Elastic IP
+maps to that private address. The host boot service in `ops/aws-egress/` makes
+the secondary addresses visible to Linux after reboot. The separate
+`docker-compose.egress.yml` project runs one authenticated CONNECT relay per
+source address; the application containers reach it through
+`host.docker.internal`.
+
+Set `EGRESS_TARGETS_JSON` in the protected `.env` with one target per relay,
+then start the relay project. Each account's Edit dialog has an **Egress
+network path** selector. Accounts default to (and existing accounts are
+initialized to) the first enabled target in configuration order; selecting a
+different target pins every provider/OAuth/quota request for that account to
+it. There is no automatic rotation or cross-target failover. The selector
+displays private and public address metadata but never relay credentials. Keep
+the relay token out of Git and restrict its allowlist to the provider hosts
+(`api.openai.com`/`chatgpt.com` for Codex).
+
+Verify with `docker compose -f docker-compose.egress.yml ps`, the relay health
+endpoint, and a provider request that returns an expected authentication error
+instead of a connection error. During production updates run
+`scripts/blue-green.sh`; never start a second Traefik or publish relay ports
+publicly. Add or remove AWS EIPs only after confirming the ENI/private-IP
+mapping and the approved company egress list.

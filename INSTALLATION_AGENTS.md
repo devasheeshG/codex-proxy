@@ -200,5 +200,36 @@ Give me a concise handoff containing:
 Never claim success until health, login, one authorized Codex account, one
 labelled user key, the Codex CLI helper, and one end-to-end request have been
 verified, or clearly mark the unfinished items as requiring my action.
-```
 
+## Approved multi-egress IP setup
+
+When the company has approved multiple provider egress IPs, ask for the AWS
+region, instance/ENI, secondary private-IP and Elastic-IP mapping, and the
+provider-approved public-IP list before changing infrastructure. Confirm that
+the operator may allocate EIPs and that no existing address is being reused.
+
+The supported topology is one EC2 ENI with multiple private addresses, each
+mapped to an Elastic IP, plus one host-network relay Compose project. The host
+boot service (`ops/aws-egress/recallr-egress-ips*`) restores secondary private
+addresses after reboot. The relay has one local listener per target and binds
+its upstream socket to that private address; the application never needs
+privileged network access. Keep relay listeners private to the host and use a
+long random token and a provider-only hostname allowlist.
+
+For each account, the dashboard's **Egress network path** field lists the
+enabled configured targets. An account with no assignment, or a cleared value,
+is pinned to the first enabled target in `EGRESS_TARGETS_JSON`; there is no
+automatic rotation or failover between addresses. An explicit target remains
+on that account for inference, OAuth refresh, quota refresh, and warm-up. Do
+not promise that an IP can be selected from an arbitrary client request: the
+binding is an operator-controlled account setting.
+
+Deployment order is: validate AWS mappings and the boot service; validate both
+Compose files; start/health-check the relay project; deploy the app with
+`scripts/blue-green.sh`/`make deploy-blue-green`; then verify the dashboard,
+`/api/accounts/egress-targets`, and one sanitized provider probe per target.
+Run `scripts/blue-green.sh status` and the independent availability probe
+before every live update. Never create a second Traefik gateway, expose relay
+ports to the Internet, print `.env`, or delete a production EIP to recover
+from a failed rollout.
+```
