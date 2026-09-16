@@ -9,6 +9,7 @@
 
 import {
     Account,
+    EgressTarget,
     ActivityResponse,
     ApiKey,
     ApiKeyCreated,
@@ -292,6 +293,10 @@ export const api = {
         const res = await request<{ accounts: Account[] }>("/v1/accounts");
         return res.accounts;
     },
+    async egressTargets(): Promise<EgressTarget[]> {
+        const res = await request<{ targets: EgressTarget[] }>("/v1/accounts/egress-targets");
+        return res.targets;
+    },
     async reorderAccounts(accountIds: string[]): Promise<Account[]> {
         const res = await request<{ accounts: Account[] }>("/v1/accounts/priorities", {
             method: "PUT",
@@ -321,6 +326,7 @@ export const api = {
             cooldown_seconds?: number | null;
             max_failover_attempts?: number | null;
             priority?: number | null;
+            egress_target_id?: string | null;
         },
     ): Promise<Account> {
         const res = await request<{ account: Account }>(`/v1/accounts/${id}`, {

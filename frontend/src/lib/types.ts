@@ -285,9 +285,21 @@ export interface Account {
     cooldown_seconds: number;
     max_failover_attempts: number;
     priority: number;
+    egress_target_id: string | null;
     // API-equivalent value of traffic routed through this subscription account.
     total_spend_usd: number;
     monthly_spend_usd: number;
+}
+
+export interface EgressTarget {
+    id: string;
+    label: string;
+    kind: string;
+    interface_name: string | null;
+    private_ip: string | null;
+    public_ip: string | null;
+    max_concurrency: number;
+    enabled: boolean;
 }
 
 export interface OAuthStartResponse {
