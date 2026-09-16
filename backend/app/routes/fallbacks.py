@@ -7,7 +7,6 @@ import json
 import uuid
 from datetime import datetime, timezone
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session

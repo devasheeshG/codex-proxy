@@ -46,7 +46,7 @@ function egressTargetLabel(provider: OpenAIFallback, targets: EgressTarget[]): s
     const target = targets.find((candidate) => candidate.id === provider.egress_target_id);
     if (!target) return "First configured path";
     if (target.interface_name && target.private_ip) {
-        return ${{target.interface_name} · ${{target.private_ip}${{target.public_ip ? \` → ${{target.public_ip}\` : ""};
+        return `${target.interface_name} · ${target.private_ip}${target.public_ip ? ` → ${target.public_ip}` : ""}`;
     }
     return target.label;
 }
@@ -496,7 +496,7 @@ function FallbackModal({
                                     value: target.id,
                                     label:
                                         target.interface_name && target.private_ip
-                                            ? ${{target.interface_name} · ${{target.private_ip}${{target.public_ip ? \` → ${{target.public_ip}\` : ""}
+                                            ? `${target.interface_name} · ${target.private_ip}${target.public_ip ? ` → ${target.public_ip}` : ""}`
                                             : target.label,
                                 }))}
                         />
