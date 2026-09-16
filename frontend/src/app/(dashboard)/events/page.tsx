@@ -47,6 +47,24 @@ function displayModel(metadata: Record<string, unknown>): string {
     return requested && requested !== effective ? `${effective} (${requested})` : effective;
 }
 
+function CacheReadMetric({ cached, input }: { cached: unknown; input: unknown }) {
+    if (cached == null || input == null) return <>—</>;
+    const cachedTokens = Number(cached);
+    const inputTokens = Number(input);
+    if (!Number.isFinite(cachedTokens) || !Number.isFinite(inputTokens)) return <>—</>;
+    if (inputTokens <= 0) return <>{formatCompactNumber(cachedTokens)}</>;
+
+    const percentage = (cachedTokens / inputTokens) * 100;
+    const tone =
+        percentage > 90 ? "text-good-400" : percentage >= 50 ? "text-warn-400" : "text-bad-400";
+    return (
+        <span className="whitespace-nowrap">
+            {formatCompactNumber(cachedTokens)}{" "}
+            <span className={tone}>({percentage.toFixed(1)}%)</span>
+        </span>
+    );
+}
+
 export default function EventsPage() {
     const [range, setRange] = useState<TimeRange>(initialRange);
     const [users, setUsers] = useState<UserLookup[]>([]);
@@ -276,8 +294,10 @@ export default function EventsPage() {
                                                     m.thinking_level ?? m.reasoning_level ?? "—",
                                                 )}
                                             </td>
-                                            <td className="text-fog-400 px-3 py-3 font-mono text-xs">
-                                                {String(m.account_name ?? "—")}
+                                            <td className="text-fog-400 w-64 max-w-64 px-3 py-3 font-mono text-xs whitespace-normal">
+                                                <span className="block [overflow-wrap:anywhere] break-words">
+                                                    {String(m.account_name ?? "—")}
+                                                </span>
                                             </td>
                                             <td className="text-brand-300 px-3 py-3 font-medium whitespace-nowrap">
                                                 <div className="flex flex-wrap items-center gap-2">
@@ -307,7 +327,10 @@ export default function EventsPage() {
                                                 {formatCompactNumber(m.output_tokens)}
                                             </td>
                                             <td className="px-3 py-3 font-mono text-xs">
-                                                {formatCompactNumber(m.cached_input_tokens)}
+                                                <CacheReadMetric
+                                                    cached={m.cached_input_tokens}
+                                                    input={m.input_tokens}
+                                                />
                                             </td>
                                             <td className="px-3 py-3 font-mono text-xs">
                                                 {formatCompactNumber(m.cache_write_tokens)}
