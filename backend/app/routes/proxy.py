@@ -855,9 +855,9 @@ async def _send_fallback_with_egress(
     upstream_path: str,
     provider: OpenAIFallbackDb,
 ) -> httpx.Response:
-    """Send a pay-as-you-go fallback through an automatically selected target."""
+    """Send a pay-as-you-go fallback through its configured target."""
     connection = egress.get_pool().acquire(
-        None,
+        provider.egress_target_id,
         priority=getattr(connection_request.state, "user_priority", 1),
     )
     try:

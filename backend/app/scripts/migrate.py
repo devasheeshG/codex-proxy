@@ -13,7 +13,7 @@ from app.utils.postgres.base import engine, init_database
 
 CANONICAL_REVISION = "001"
 LEGACY_EQUIVALENT_HEADS = frozenset({"0009", "002", "003", "004", "005", "006"})
-KNOWN_CHAIN_REVISIONS = frozenset({"001", "007", "008", "009", "010"})
+KNOWN_CHAIN_REVISIONS = frozenset({"001", "007", "008", "009", "010", "011"})
 
 
 def normalize_legacy_head() -> None:
@@ -138,6 +138,13 @@ def sync_canonical_schema() -> None:
         default_egress_target = egress.get_pool().default_target().id
         connection.execute(
             text("UPDATE accounts SET egress_target_id = :target_id"),
+            {"target_id": default_egress_target},
+        )
+        fallback_columns = {column["name"] for column in inspect(connection).get_columns("openai_fallbacks")}
+        if "egress_target_id" not in fallback_columns:
+            connection.execute(text("ALTER TABLE openai_fallbacks ADD COLUMN egress_target_id VARCHAR(128)"))
+        connection.execute(
+            text("UPDATE openai_fallbacks SET egress_target_id = :target_id"),
             {"target_id": default_egress_target},
         )
 

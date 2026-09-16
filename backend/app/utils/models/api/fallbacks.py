@@ -25,6 +25,7 @@ class OpenAIFallback(BaseModel):
     provider_health_checked_at: Optional[datetime]
     cooldown_until: Optional[datetime]
     priority: int
+    egress_target_id: Optional[str]
     monthly_spend_limit_usd: Optional[float]
     monthly_spend_usd: float
     monthly_spend_remaining_usd: Optional[float]
@@ -43,6 +44,7 @@ class CreateOpenAIFallbackRequest(BaseModel):
     api_key: str = Field(min_length=8, max_length=4096)
     monthly_spend_limit_usd: Optional[float] = Field(default=None, gt=0, le=10_000_000)
     priority: int = Field(default=1, ge=1, le=10_000)
+    egress_target_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class UpdateOpenAIFallbackRequest(BaseModel):
@@ -54,6 +56,7 @@ class UpdateOpenAIFallbackRequest(BaseModel):
     monthly_spend_limit_usd: Optional[float] = Field(default=None, gt=0, le=10_000_000)
     clear_monthly_spend_limit: bool = False
     priority: Optional[int] = Field(default=None, ge=1, le=10_000)
+    egress_target_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class OpenAIFallbackResponse(BaseModel):

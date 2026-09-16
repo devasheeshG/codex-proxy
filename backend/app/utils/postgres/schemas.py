@@ -280,6 +280,7 @@ class OpenAIFallbackDb(DatabaseBase):
     provider_health_checked_at = Column(DateTime(timezone=True), nullable=True)
     cooldown_until = Column(DateTime(timezone=True), nullable=True)
     priority = Column(Integer, nullable=False, default=1, server_default="1")
+    egress_target_id = Column(VARCHAR(128), nullable=True)
     monthly_spend_limit_usd = Column(Float, nullable=True)
     model_catalog_json = Column(Text, nullable=True)
     model_catalog_refreshed_at = Column(DateTime(timezone=True), nullable=True)

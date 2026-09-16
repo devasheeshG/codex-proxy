@@ -180,6 +180,7 @@ def to_api(db: Session, provider: OpenAIFallbackDb) -> OpenAIFallback:
         provider_health_checked_at=provider.provider_health_checked_at,
         cooldown_until=provider.cooldown_until,
         priority=provider.priority,
+        egress_target_id=provider.egress_target_id,
         monthly_spend_limit_usd=limit,
         monthly_spend_usd=round(spent, 6),
         monthly_spend_remaining_usd=None if limit is None else round(max(limit - spent, 0.0), 6),

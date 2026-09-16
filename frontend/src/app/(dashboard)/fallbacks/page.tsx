@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Cable, Gauge, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
-import { AccountStatus, OpenAIFallback, ProviderHealth } from "@/lib/types";
+import { AccountStatus, EgressTarget, OpenAIFallback, ProviderHealth } from "@/lib/types";
 import { formatDateTime, formatUsd } from "@/lib/format";
 import {
     Badge,
@@ -17,6 +17,7 @@ import {
     Modal,
     Spinner,
     StatusToggle,
+    SelectMenu,
     TextInput,
     UsageBar,
 } from "@/components/ui";
@@ -41,8 +42,18 @@ function spendFraction(provider: OpenAIFallback): number | null {
     return provider.monthly_spend_usd / provider.monthly_spend_limit_usd;
 }
 
+function egressTargetLabel(provider: OpenAIFallback, targets: EgressTarget[]): string {
+    const target = targets.find((candidate) => candidate.id === provider.egress_target_id);
+    if (!target) return "First configured path";
+    if (target.interface_name && target.private_ip) {
+        return ${{target.interface_name} · ${{target.private_ip}${{target.public_ip ? \` → ${{target.public_ip}\` : ""};
+    }
+    return target.label;
+}
+
 export default function FallbacksPage() {
     const [providers, setProviders] = useState<OpenAIFallback[] | null>(null);
+    const [egressTargets, setEgressTargets] = useState<EgressTarget[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [busyId, setBusyId] = useState<string | null>(null);
@@ -56,9 +67,10 @@ export default function FallbacksPage() {
         if (!background) setLoading(true);
         if (!background) setError(null);
         try {
-            const loaded = await api.fallbacks();
+            const [loaded, targets] = await Promise.all([api.fallbacks(), api.egressTargets()]);
             if (requestId !== loadRequestId.current) return;
             setProviders(loaded);
+            setEgressTargets(targets);
         } catch (err) {
             if (requestId !== loadRequestId.current) return;
             setError(err instanceof Error ? err.message : "Could not load API fallbacks.");
@@ -221,6 +233,9 @@ export default function FallbacksPage() {
                                             <span aria-hidden>·</span>
                                             <span className="shrink-0">{provider.key_hint}</span>
                                         </div>
+                                        <div className="text-fog-500 mt-1 truncate text-[11px]">
+                                            Egress · {egressTargetLabel(provider, egressTargets)}
+                                        </div>
                                     </div>
                                     <StatusToggle
                                         on={enabled}
@@ -299,6 +314,7 @@ export default function FallbacksPage() {
 
             {showAdd ? (
                 <FallbackModal
+                    egressTargets={egressTargets}
                     onClose={() => setShowAdd(false)}
                     onDone={(created) => {
                         setShowAdd(false);
@@ -310,6 +326,7 @@ export default function FallbacksPage() {
             {editTarget ? (
                 <FallbackModal
                     provider={editTarget}
+                    egressTargets={egressTargets}
                     onClose={() => setEditTarget(null)}
                     onDone={(updated) => {
                         setEditTarget(null);
@@ -363,10 +380,12 @@ function SummaryCell({
 
 function FallbackModal({
     provider,
+    egressTargets,
     onClose,
     onDone,
 }: {
     provider?: OpenAIFallback;
+    egressTargets: EgressTarget[];
     onClose: () => void;
     onDone: (provider: OpenAIFallback) => void;
 }) {
@@ -377,6 +396,10 @@ function FallbackModal({
         provider?.monthly_spend_limit_usd?.toString() ?? "",
     );
     const [priority, setPriority] = useState(provider?.priority.toString() ?? "1");
+    const defaultEgressTargetId = egressTargets.find((target) => target.enabled)?.id ?? "";
+    const [egressTargetId, setEgressTargetId] = useState(
+        provider?.egress_target_id ?? defaultEgressTargetId,
+    );
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -396,6 +419,7 @@ function FallbackModal({
                           ? { clear_monthly_spend_limit: true }
                           : { monthly_spend_limit_usd: parsedLimit }),
                       priority: parsedPriority,
+                      egress_target_id: egressTargetId || defaultEgressTargetId || null,
                   })
                 : await api.createFallback({
                       label: label.trim(),
@@ -403,6 +427,7 @@ function FallbackModal({
                       api_key: apiKey.trim(),
                       monthly_spend_limit_usd: parsedLimit,
                       priority: parsedPriority,
+                      egress_target_id: egressTargetId || defaultEgressTargetId || null,
                   });
             onDone(saved);
         } catch (err) {
@@ -457,6 +482,25 @@ function FallbackModal({
                     />
                 </Field>
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <Field
+                        label="Egress network path"
+                        hint="Choose the source interface/IP used for this fallback."
+                    >
+                        <SelectMenu
+                            value={egressTargetId}
+                            onChange={setEgressTargetId}
+                            ariaLabel="Select fallback egress network path"
+                            options={egressTargets
+                                .filter((target) => target.enabled)
+                                .map((target) => ({
+                                    value: target.id,
+                                    label:
+                                        target.interface_name && target.private_ip
+                                            ? ${{target.interface_name} · ${{target.private_ip}${{target.public_ip ? \` → ${{target.public_ip}\` : ""}
+                                            : target.label,
+                                }))}
+                        />
+                    </Field>
                     <Field label="Monthly spend cap (USD)" hint="Blank means no proxy-side cap.">
                         <TextInput
                             type="number"
