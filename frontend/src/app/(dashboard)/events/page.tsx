@@ -56,11 +56,9 @@ function CacheReadMetric({ cached, input }: { cached: unknown; input: unknown })
 
     const percentage = (cachedTokens / inputTokens) * 100;
     const tone =
-        percentage > 90
+        percentage > 95
             ? "bg-good-500/15 text-good-300 ring-good-500/25"
-            : percentage >= 50
-              ? "bg-warn-500/15 text-warn-300 ring-warn-500/25"
-              : "bg-bad-500/15 text-bad-300 ring-bad-500/25";
+            : "bg-bad-500/15 text-bad-300 ring-bad-500/25";
     return (
         <span
             className={`inline-flex min-w-20 flex-col gap-0.5 rounded-md px-2 py-1 text-xs leading-tight ring-1 ring-inset ${tone}`}
