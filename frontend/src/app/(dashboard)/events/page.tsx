@@ -56,11 +56,17 @@ function CacheReadMetric({ cached, input }: { cached: unknown; input: unknown })
 
     const percentage = (cachedTokens / inputTokens) * 100;
     const tone =
-        percentage > 90 ? "text-good-400" : percentage >= 50 ? "text-warn-400" : "text-bad-400";
+        percentage > 90
+            ? "bg-good-500/15 text-good-300 ring-good-500/25"
+            : percentage >= 50
+              ? "bg-warn-500/15 text-warn-300 ring-warn-500/25"
+              : "bg-bad-500/15 text-bad-300 ring-bad-500/25";
     return (
-        <span className="whitespace-nowrap">
-            {formatCompactNumber(cachedTokens)}{" "}
-            <span className={tone}>({percentage.toFixed(1)}%)</span>
+        <span
+            className={`inline-flex min-w-20 flex-col gap-0.5 rounded-md px-2 py-1 text-xs leading-tight ring-1 ring-inset ${tone}`}
+        >
+            <span>{formatCompactNumber(cachedTokens)}</span>
+            <span className="text-[11px] font-medium">({percentage.toFixed(1)}%)</span>
         </span>
     );
 }
@@ -237,10 +243,6 @@ export default function EventsPage() {
                 </button>
             </div>
             <section className="border-ink-700 bg-ink-900 overflow-hidden rounded-xl border">
-                <div className="border-ink-700 text-fog-400 flex justify-between border-b px-4 py-3 text-xs font-medium uppercase sm:px-5">
-                    <span>Event log</span>
-                    <span>{total} events</span>
-                </div>
                 {loading ? (
                     <div className="text-fog-400 p-6 text-sm">Loading…</div>
                 ) : error ? (
@@ -248,8 +250,8 @@ export default function EventsPage() {
                 ) : events.length === 0 ? (
                     <div className="text-fog-400 p-6 text-sm">No events in this range.</div>
                 ) : (
-                    <div className="overflow-x-auto">
-                        <table className="w-full min-w-[1220px] text-left text-sm">
+                    <div className="overflow-x-auto overscroll-x-contain">
+                        <table className="w-full min-w-[1720px] text-left text-sm">
                             <thead className="bg-ink-850 text-fog-400 border-ink-700 border-b text-xs uppercase">
                                 <tr>
                                     {[
@@ -266,7 +268,10 @@ export default function EventsPage() {
                                         "Cost",
                                         "Status",
                                     ].map((x) => (
-                                        <th key={x} className="px-3 py-3 font-medium">
+                                        <th
+                                            key={x}
+                                            className="px-3 py-3 font-medium whitespace-nowrap"
+                                        >
                                             {x}
                                         </th>
                                     ))}
@@ -280,26 +285,26 @@ export default function EventsPage() {
                                             key={e.id}
                                             className={`border-ink-800 border-b align-top ${rowTone(e.event_type)}`}
                                         >
-                                            <td className="text-fog-400 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                            <td className="text-fog-400 w-44 min-w-44 px-3 py-3 font-mono text-xs whitespace-nowrap">
                                                 {formatDateTime(e.created_at)}
                                             </td>
-                                            <td className="text-fog-300 px-3 py-3 text-xs">
+                                            <td className="text-fog-300 w-32 min-w-32 px-3 py-3 text-xs whitespace-nowrap">
                                                 {users.find((u) => u.id === e.user_id)?.name ?? "—"}
                                             </td>
-                                            <td className="text-fog-300 px-3 py-3 text-xs">
+                                            <td className="text-fog-300 w-48 min-w-48 px-3 py-3 text-xs break-words whitespace-normal">
                                                 {displayModel(m)}
                                             </td>
-                                            <td className="text-fog-300 px-3 py-3 text-xs">
+                                            <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
                                                 {String(
                                                     m.thinking_level ?? m.reasoning_level ?? "—",
                                                 )}
                                             </td>
-                                            <td className="text-fog-400 w-64 max-w-64 px-3 py-3 font-mono text-xs whitespace-normal">
+                                            <td className="text-fog-400 w-80 max-w-80 min-w-80 px-3 py-3 font-mono text-xs whitespace-normal">
                                                 <span className="block [overflow-wrap:anywhere] break-words">
                                                     {String(m.account_name ?? "—")}
                                                 </span>
                                             </td>
-                                            <td className="text-brand-300 px-3 py-3 font-medium whitespace-nowrap">
+                                            <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">
                                                 <div className="flex flex-wrap items-center gap-2">
                                                     <span>{e.event_type}</span>
                                                     {(e.event_type === "request.received" ||
@@ -320,27 +325,27 @@ export default function EventsPage() {
                                                     ) : null}
                                                 </div>
                                             </td>
-                                            <td className="px-3 py-3 font-mono text-xs">
+                                            <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
                                                 {formatCompactNumber(m.input_tokens)}
                                             </td>
-                                            <td className="px-3 py-3 font-mono text-xs">
+                                            <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
                                                 {formatCompactNumber(m.output_tokens)}
                                             </td>
-                                            <td className="px-3 py-3 font-mono text-xs">
+                                            <td className="w-32 min-w-32 px-3 py-3 font-mono text-xs">
                                                 <CacheReadMetric
                                                     cached={m.cached_input_tokens}
                                                     input={m.input_tokens}
                                                 />
                                             </td>
-                                            <td className="px-3 py-3 font-mono text-xs">
+                                            <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
                                                 {formatCompactNumber(m.cache_write_tokens)}
                                             </td>
-                                            <td className="px-3 py-3 font-mono text-xs">
+                                            <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
                                                 {m.cost_usd == null
                                                     ? "—"
                                                     : `$${Number(m.cost_usd).toFixed(4)}`}
                                             </td>
-                                            <td className="text-fog-300 px-3 py-3">
+                                            <td className="text-fog-300 w-24 min-w-24 px-3 py-3 whitespace-nowrap">
                                                 {e.status_code ?? "—"}
                                             </td>
                                         </tr>

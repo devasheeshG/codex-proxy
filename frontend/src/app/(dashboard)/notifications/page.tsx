@@ -25,6 +25,7 @@ const ACCOUNT_EVENTS = new Set([
     "pool_unavailable",
 ]);
 const SYSTEM_EVENTS = new Set(["notifier_installed"]);
+const HEALTH_EVENTS = new Set(["elevated_503"]);
 const REPORT_EVENTS = new Set([
     "daily_usage_report",
     "weekly_usage_report",
@@ -202,6 +203,51 @@ function TimezoneSelect({ value, onChange }: { value: string; onChange: (value: 
                 </div>
             ) : null}
         </div>
+    );
+}
+
+function RuleGroup({
+    title,
+    description,
+    rules,
+    onSaved,
+}: {
+    title: string;
+    description: string;
+    rules: NotificationRule[];
+    onSaved: (settings: NotificationSettings) => void;
+}) {
+    const [open, setOpen] = useState(true);
+    return (
+        <section className="space-y-3">
+            <button
+                type="button"
+                onClick={() => setOpen((current) => !current)}
+                aria-expanded={open}
+                className="group flex w-full items-start justify-between gap-4 px-1 text-left"
+            >
+                <span>
+                    <span className="text-fog-200 block text-xs font-semibold tracking-[0.16em] uppercase">
+                        {title}
+                    </span>
+                    <span className="text-fog-400 mt-1 block text-xs">{description}</span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                    <span className="text-fog-400 text-[10px] font-medium tracking-[0.14em] uppercase">
+                        {rules.filter((rule) => rule.enabled).length} active
+                    </span>
+                    <ChevronDown
+                        size={16}
+                        className={`text-fog-400 transition-transform ${open ? "rotate-180" : ""}`}
+                    />
+                </span>
+            </button>
+            {open
+                ? rules.map((rule) => (
+                      <RuleEditor key={rule.event_type} rule={rule} onSaved={onSaved} />
+                  ))
+                : null}
+        </section>
     );
 }
 
@@ -461,12 +507,14 @@ export default function NotificationsPage() {
     }
 
     const systemRules = settings.rules.filter((rule) => SYSTEM_EVENTS.has(rule.event_type));
+    const healthRules = settings.rules.filter((rule) => HEALTH_EVENTS.has(rule.event_type));
     const accountRules = settings.rules.filter((rule) => ACCOUNT_EVENTS.has(rule.event_type));
     const reportRules = settings.rules.filter((rule) => REPORT_EVENTS.has(rule.event_type));
     const clientRules = settings.rules.filter(
         (rule) =>
             !ACCOUNT_EVENTS.has(rule.event_type) &&
             !SYSTEM_EVENTS.has(rule.event_type) &&
+            !HEALTH_EVENTS.has(rule.event_type) &&
             !REPORT_EVENTS.has(rule.event_type),
     );
 
@@ -654,83 +702,36 @@ export default function NotificationsPage() {
                 </div>
 
                 <div className="space-y-7">
-                    <section className="space-y-3">
-                        <div className="flex items-end justify-between gap-4 px-1">
-                            <div>
-                                <h2 className="text-fog-200 text-xs font-semibold tracking-[0.16em] uppercase">
-                                    Delivery lifecycle
-                                </h2>
-                                <p className="text-fog-400 mt-1 text-xs">
-                                    Confirms when a destination becomes ready to receive alerts.
-                                </p>
-                            </div>
-                            <span className="text-fog-400 text-[10px] font-medium tracking-[0.14em] uppercase">
-                                {systemRules.filter((rule) => rule.enabled).length} active
-                            </span>
-                        </div>
-                        {systemRules.map((rule) => (
-                            <RuleEditor key={rule.event_type} rule={rule} onSaved={applySettings} />
-                        ))}
-                    </section>
-
-                    <section className="space-y-3">
-                        <div className="flex items-end justify-between gap-4 px-1">
-                            <div>
-                                <h2 className="text-fog-200 text-xs font-semibold tracking-[0.16em] uppercase">
-                                    Scheduled reports
-                                </h2>
-                                <p className="text-fog-400 mt-1 text-xs">
-                                    Completed-period usage summaries with request, token, and
-                                    active-user distribution.
-                                </p>
-                            </div>
-                            <span className="text-fog-400 text-[10px] font-medium tracking-[0.14em] uppercase">
-                                {reportRules.filter((rule) => rule.enabled).length} active
-                            </span>
-                        </div>
-                        {reportRules.map((rule) => (
-                            <RuleEditor key={rule.event_type} rule={rule} onSaved={applySettings} />
-                        ))}
-                    </section>
-
-                    <section className="space-y-3">
-                        <div className="flex items-end justify-between gap-4 px-1">
-                            <div>
-                                <h2 className="text-fog-200 text-xs font-semibold tracking-[0.16em] uppercase">
-                                    Account & pool signals
-                                </h2>
-                                <p className="text-fog-400 mt-1 text-xs">
-                                    High-value operational events, enabled by default.
-                                </p>
-                            </div>
-                            <span className="text-fog-400 text-[10px] font-medium tracking-[0.14em] uppercase">
-                                {accountRules.filter((rule) => rule.enabled).length} active
-                            </span>
-                        </div>
-                        {accountRules.map((rule) => (
-                            <RuleEditor key={rule.event_type} rule={rule} onSaved={applySettings} />
-                        ))}
-                    </section>
-
-                    <section className="space-y-3">
-                        <div className="flex items-end justify-between gap-4 px-1">
-                            <div>
-                                <h2 className="text-fog-200 text-xs font-semibold tracking-[0.16em] uppercase">
-                                    Client guardrails
-                                </h2>
-                                <p className="text-fog-400 mt-1 text-xs">
-                                    User and API-key alerts; muted by default to keep the group
-                                    quiet.
-                                </p>
-                            </div>
-                            <span className="text-fog-400 text-[10px] font-medium tracking-[0.14em] uppercase">
-                                {clientRules.filter((rule) => rule.enabled).length} active
-                            </span>
-                        </div>
-                        {clientRules.map((rule) => (
-                            <RuleEditor key={rule.event_type} rule={rule} onSaved={applySettings} />
-                        ))}
-                    </section>
+                    <RuleGroup
+                        title="Delivery lifecycle"
+                        description="Confirms when a destination becomes ready to receive alerts."
+                        rules={systemRules}
+                        onSaved={applySettings}
+                    />
+                    <RuleGroup
+                        title="Scheduled reports"
+                        description="Completed-period usage summaries with request, token, and active-user distribution."
+                        rules={reportRules}
+                        onSaved={applySettings}
+                    />
+                    <RuleGroup
+                        title="Account & pool signals"
+                        description="High-value operational events, enabled by default."
+                        rules={accountRules}
+                        onSaved={applySettings}
+                    />
+                    <RuleGroup
+                        title="Client guardrails"
+                        description="User and API-key alerts; muted by default to keep the group quiet."
+                        rules={clientRules}
+                        onSaved={applySettings}
+                    />
+                    <RuleGroup
+                        title="System health"
+                        description="Aggregated service-health alerts when multiple users encounter elevated 503 errors."
+                        rules={healthRules}
+                        onSaved={applySettings}
+                    />
                 </div>
             </div>
         </div>

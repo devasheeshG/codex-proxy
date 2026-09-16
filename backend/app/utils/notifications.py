@@ -21,6 +21,7 @@ from app.utils.postgres import (
     NotificationChannelDb,
     NotificationDeliveryDb,
     NotificationRuleDb,
+    ProxyEventDb,
     UsageRecordDb,
     UserDb,
 )
@@ -38,6 +39,9 @@ _STATUS_COMMAND = re.compile(
     re.IGNORECASE,
 )
 _TELEGRAM_MESSAGE_LIMIT = 4096
+ELEVATED_503_WINDOW_SECONDS = 60
+ELEVATED_503_MIN_REQUESTS = 5
+ELEVATED_503_MIN_USERS = 3
 
 
 @dataclass(frozen=True)
@@ -256,6 +260,25 @@ EVENTS: dict[str, EventDefinition] = {
         default_enabled=True,
         cooldown_seconds=900,
         variables=COMMON_VARIABLES + ("usable_accounts", "total_accounts", "next_reset_at"),
+    ),
+    "elevated_503": EventDefinition(
+        title="Elevated 503 errors across users",
+        description=(
+            "Sent when at least five exhausted requests from three or more distinct users occur within a rolling "
+            "one-minute window. The repeat cooldown prevents a storm of duplicate Telegram alerts."
+        ),
+        default_template=(
+            "🚨 Elevated 503 errors detected\n\n"
+            "Multiple users are experiencing unavailable proxy capacity.\n"
+            "503 responses: {{ error_count }}\n"
+            "Affected users: {{ affected_user_count }}\n"
+            "Window: {{ window_seconds }} seconds\n"
+            "Users: {{ affected_users }}\n"
+            "Detected: {{ event_time }}"
+        ),
+        default_enabled=False,
+        cooldown_seconds=900,
+        variables=COMMON_VARIABLES + ("error_count", "affected_user_count", "window_seconds", "affected_users"),
     ),
     "user_rate_limit": EventDefinition(
         title="User request rate limit exceeded",
@@ -607,6 +630,34 @@ def enqueue_pool_unavailable(db: Session, dashboard_url: str = "") -> int:
         "next_reset_at": _format_time(min(resets) if resets else None),
     }
     return enqueue_event(db, "pool_unavailable", context, "pool")
+
+
+def enqueue_elevated_503(db: Session, dashboard_url: str = "") -> int:
+    """Queue one alert when distinct users encounter a burst of exhausted 503s."""
+    now = utcnow()
+    recent = (
+        db.query(ProxyEventDb)
+        .filter(
+            ProxyEventDb.event_type == "request.exhausted",
+            ProxyEventDb.status_code == 503,
+            ProxyEventDb.created_at >= now - timedelta(seconds=ELEVATED_503_WINDOW_SECONDS),
+        )
+        .all()
+    )
+    user_ids = {event.user_id for event in recent if event.user_id is not None}
+    if len(recent) < ELEVATED_503_MIN_REQUESTS or len(user_ids) < ELEVATED_503_MIN_USERS:
+        return 0
+    names = {user.name for user in db.query(UserDb).filter(UserDb.id.in_(user_ids)).all() if user.name}
+    context = {
+        "event_time": _format_time(now),
+        "dashboard_url": dashboard_url,
+        "error_count": len(recent),
+        "affected_user_count": len(user_ids),
+        "window_seconds": ELEVATED_503_WINDOW_SECONDS,
+        "affected_users": ", ".join(sorted(names)) or "Unknown users",
+    }
+    bucket = int(now.timestamp() // ELEVATED_503_WINDOW_SECONDS)
+    return enqueue_event(db, "elevated_503", context, f"503:{bucket}")
 
 
 def enqueue_client_limit(

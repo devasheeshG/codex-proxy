@@ -1317,7 +1317,7 @@ async def proxy_responses(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             message="No subscription account or API fallback could serve the request",
         )
-        await client.aclose()
+        notifications.enqueue_elevated_503(db, settings.FRONTEND_ORIGIN)
         known_model = bool(request_model) and any(
             rotation.supports_model(account, str(request_model)) is True
             for account in db.query(AccountDb).filter(AccountDb.status != AccountStatus.DISABLED).all()
