@@ -1,13 +1,21 @@
 """Notification settings, template safety, deduplication, and Telegram delivery tests."""
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import respx
 from httpx import Response
 
 from app.utils import crypto, notifications, provider_health
 from app.utils.models.api import ProviderHealth
-from app.utils.postgres import AccountDb, NotificationChannelDb, NotificationDeliveryDb, NotificationRuleDb
+from app.utils.postgres import (
+    AccountDb,
+    NotificationChannelDb,
+    NotificationDeliveryDb,
+    NotificationRuleDb,
+    ProxyEventDb,
+    UserDb,
+)
 from app.utils.postgres.base import SessionFactory
 
 
@@ -291,6 +299,36 @@ def test_threshold_event_is_rendered_and_deduplicated(client, admin_headers, see
         assert "nearly-full@example.com" in deliveries[0].message
         assert "5-hour threshold: 95.0%" in deliveries[0].message
         assert "Weekly threshold: 95.0%" in deliveries[0].message
+
+
+def test_exhausted_503_alerts_for_one_user_and_respects_cooldown(client, admin_headers, make_user):
+    _configure_telegram(client, admin_headers)
+    make_user("single-503")
+
+    with SessionFactory() as db:
+        rule = db.query(NotificationRuleDb).filter(NotificationRuleDb.event_type == "elevated_503").one()
+        rule.enabled = True
+        user = db.query(UserDb).filter(UserDb.name == "single-503").one()
+        db.add(
+            ProxyEventDb(
+                id=uuid4(),
+                created_at=notifications.utcnow(),
+                request_id="req_single_503",
+                user_id=user.id,
+                event_type="request.exhausted",
+                status_code=503,
+                message="No capacity",
+            )
+        )
+        db.flush()
+        assert notifications.enqueue_elevated_503(db) == 1
+        assert notifications.enqueue_elevated_503(db) == 0
+        db.commit()
+
+    with SessionFactory() as db:
+        delivery = db.query(NotificationDeliveryDb).filter(NotificationDeliveryDb.event_type == "elevated_503").one()
+        assert "HTTP 503" in delivery.message
+        assert "Affected users: 1" in delivery.message
 
 
 def test_threshold_event_deduplicates_reset_timestamp_drift(client, admin_headers, seed_account):

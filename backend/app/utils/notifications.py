@@ -40,8 +40,6 @@ _STATUS_COMMAND = re.compile(
 )
 _TELEGRAM_MESSAGE_LIMIT = 4096
 ELEVATED_503_WINDOW_SECONDS = 60
-ELEVATED_503_MIN_REQUESTS = 5
-ELEVATED_503_MIN_USERS = 3
 
 
 @dataclass(frozen=True)
@@ -172,10 +170,20 @@ _ACCOUNT_HARD_LIMIT_TEMPLATE = (
     "Weekly threshold: {{ weekly_rotation_threshold }}%\n"
     "Traffic is moving to the next available account."
 )
+_ELEVATED_503_TEMPLATE_V1 = (
+    "🚨 Elevated 503 errors detected\n\n"
+    "Multiple users are experiencing unavailable proxy capacity.\n"
+    "503 responses: {{ error_count }}\n"
+    "Affected users: {{ affected_user_count }}\n"
+    "Window: {{ window_seconds }} seconds\n"
+    "Users: {{ affected_users }}\n"
+    "Detected: {{ event_time }}"
+)
 LEGACY_DEFAULT_TEMPLATES: dict[str, tuple[str, ...]] = {
     "account_added": (_ACCOUNT_ADDED_TEMPLATE_V1, _ACCOUNT_ADDED_TEMPLATE_V2),
     "account_quota_threshold": (_ACCOUNT_QUOTA_THRESHOLD_TEMPLATE_V1, _ACCOUNT_QUOTA_THRESHOLD_TEMPLATE_V2),
     "account_hard_limit": (_ACCOUNT_HARD_LIMIT_TEMPLATE_V1, _ACCOUNT_HARD_LIMIT_TEMPLATE_V2),
+    "elevated_503": (_ELEVATED_503_TEMPLATE_V1,),
 }
 
 EVENTS: dict[str, EventDefinition] = {
@@ -262,15 +270,15 @@ EVENTS: dict[str, EventDefinition] = {
         variables=COMMON_VARIABLES + ("usable_accounts", "total_accounts", "next_reset_at"),
     ),
     "elevated_503": EventDefinition(
-        title="Elevated 503 errors across users",
+        title="503 capacity exhaustion",
         description=(
-            "Sent when at least five exhausted requests from three or more distinct users occur within a rolling "
-            "one-minute window. The repeat cooldown prevents a storm of duplicate Telegram alerts."
+            "Sent whenever an exhausted request returns HTTP 503, including a single affected user. "
+            "The configurable cooldown prevents duplicate Telegram alerts while failures continue."
         ),
         default_template=(
-            "🚨 Elevated 503 errors detected\n\n"
-            "Multiple users are experiencing unavailable proxy capacity.\n"
-            "503 responses: {{ error_count }}\n"
+            "🚨 Proxy request exhausted (HTTP 503)\n\n"
+            "No subscription account or fallback could serve a request.\n"
+            "503 responses in the last {{ window_seconds }} seconds: {{ error_count }}\n"
             "Affected users: {{ affected_user_count }}\n"
             "Window: {{ window_seconds }} seconds\n"
             "Users: {{ affected_users }}\n"
@@ -633,7 +641,7 @@ def enqueue_pool_unavailable(db: Session, dashboard_url: str = "") -> int:
 
 
 def enqueue_elevated_503(db: Session, dashboard_url: str = "") -> int:
-    """Queue one alert when distinct users encounter a burst of exhausted 503s."""
+    """Queue an alert for every exhausted 503, subject to each rule's cooldown."""
     now = utcnow()
     recent = (
         db.query(ProxyEventDb)
@@ -644,9 +652,9 @@ def enqueue_elevated_503(db: Session, dashboard_url: str = "") -> int:
         )
         .all()
     )
-    user_ids = {event.user_id for event in recent if event.user_id is not None}
-    if len(recent) < ELEVATED_503_MIN_REQUESTS or len(user_ids) < ELEVATED_503_MIN_USERS:
+    if not recent:
         return 0
+    user_ids = {event.user_id for event in recent if event.user_id is not None}
     names = {user.name for user in db.query(UserDb).filter(UserDb.id.in_(user_ids)).all() if user.name}
     context = {
         "event_time": _format_time(now),
@@ -656,8 +664,9 @@ def enqueue_elevated_503(db: Session, dashboard_url: str = "") -> int:
         "window_seconds": ELEVATED_503_WINDOW_SECONDS,
         "affected_users": ", ".join(sorted(names)) or "Unknown users",
     }
-    bucket = int(now.timestamp() // ELEVATED_503_WINDOW_SECONDS)
-    return enqueue_event(db, "elevated_503", context, f"503:{bucket}")
+    # Keep the dedupe key stable so the configured cooldown spans rolling
+    # minute boundaries instead of resetting at every new minute bucket.
+    return enqueue_event(db, "elevated_503", context, "503")
 
 
 def enqueue_client_limit(
