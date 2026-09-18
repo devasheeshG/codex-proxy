@@ -731,7 +731,6 @@ def delete_account(
     )
     db.delete(account)
     db.flush()
-    remaining = db.query(AccountDb).order_by(AccountDb.priority.asc(), AccountDb.created_at.asc()).all()
-    for position, candidate in enumerate(remaining, start=1):
-        candidate.priority = position
+    # Priority is a lane, not a unique rank. Deleting an account must not
+    # renumber unrelated accounts or silently change their routing policy.
     db.commit()

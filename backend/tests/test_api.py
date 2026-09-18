@@ -621,6 +621,21 @@ def test_account_priority_update_preserves_duplicate_priority_groups(client, adm
     assert str(second) != str(third)
 
 
+def test_account_delete_preserves_remaining_priority_lanes(client, admin_headers, seed_account):
+    seed_account("delete-first", priority=1)
+    middle = seed_account("delete-middle", priority=3)
+    seed_account("delete-last", priority=3)
+
+    response = client.delete(f"/api/v1/accounts/{middle}", headers=admin_headers)
+
+    assert response.status_code == 204
+    accounts = client.get("/api/v1/accounts", headers=admin_headers).json()["accounts"]
+    assert {account["label"]: account["priority"] for account in accounts} == {
+        "delete-first": 1,
+        "delete-last": 3,
+    }
+
+
 def test_bulk_priority_assignment_updates_selected_accounts_and_users(client, admin_headers, seed_account):
     account_ids = [str(seed_account("bulk-a", priority=1)), str(seed_account("bulk-b", priority=2)), str(seed_account("keep", priority=3))]
     account_response = client.put(
