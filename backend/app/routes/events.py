@@ -31,6 +31,9 @@ def list_events(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ProxyEventPage:
     query = db.query(ProxyEventDb)
+    # Admission reservations back client rate-limit enforcement but are not
+    # user-facing proxy events; request.received remains the visible audit row.
+    query = query.filter(ProxyEventDb.event_type != "request.reserved")
     if event_type:
         query = query.filter(ProxyEventDb.event_type == event_type)
     if request_id:

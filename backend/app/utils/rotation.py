@@ -33,7 +33,9 @@ HARD_LIMIT_REACHED_TYPES = {
     "workspace_member_credits_depleted",
     "workspace_owner_usage_limit_reached",
     "workspace_member_usage_limit_reached",
+    "usage_limit_reached",
 }
+HARD_LIMIT_BODY_TYPES = HARD_LIMIT_REACHED_TYPES | {"usage_limit_reached"}
 
 
 @dataclass(frozen=True)
@@ -373,6 +375,47 @@ def update_quota_from_headers(account: AccountDb, headers: Mapping[str, str]) ->
     return h.get("x-codex-rate-limit-reached-type")
 
 
+def apply_rate_limit_body(account: AccountDb, body: bytes) -> tuple[Optional[str], Optional[datetime]]:
+    """Persist quota state carried only in a Codex 429 JSON body.
+
+    Codex sometimes omits ``Retry-After`` and quota headers while returning
+    ``usage_limit_reached`` with an epoch reset timestamp. Without persisting
+    this body, routing retries a hard-limited Team member after the generic
+    60-second cooldown and creates a failover storm.
+    """
+    try:
+        payload = json.loads(body.decode(errors="replace"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return None, None
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    if not isinstance(error, Mapping):
+        return None, None
+    # Some Codex responses put the provider details one level deeper.  Keep
+    # the parser tolerant so a hard account limit is never reduced to the
+    # generic one-minute cooldown just because the envelope changed.
+    details = error.get("details") if isinstance(error.get("details"), Mapping) else {}
+    reached_type = error.get("type") or error.get("code") or details.get("type") or details.get("code")
+    if not isinstance(reached_type, str) or reached_type not in HARD_LIMIT_BODY_TYPES:
+        return reached_type if isinstance(reached_type, str) else None, None
+    reset_raw = error.get("resets_at") or error.get("reset_at") or details.get("resets_at") or details.get("reset_at")
+    reset_at = _parse_reset(str(reset_raw)) if reset_raw is not None else None
+    if reset_at is None:
+        seconds_raw = error.get("resets_in_seconds") or details.get("resets_in_seconds")
+        try:
+            if seconds_raw is not None:
+                reset_at = datetime.now(timezone.utc) + timedelta(seconds=max(0, float(seconds_raw)))
+        except (TypeError, ValueError):
+            reset_at = None
+    if (account.tier or "").strip().lower() == "free":
+        account.monthly_used_pct = 1.0
+        account.monthly_reset_at = reset_at
+    else:
+        account.five_hour_used_pct = 1.0
+        account.five_hour_reset_at = reset_at
+    account.quota_refreshed_at = datetime.now(timezone.utc)
+    return reached_type, reset_at
+
+
 def apply_usage_probe(account: AccountDb, usage: Mapping[str, object]) -> bool:
     """Update quota fields from a zero-spend usage probe (see oauth.fetch_usage)."""
     for key, used_attr, reset_attr in (
@@ -525,16 +568,41 @@ def parse_retry_after(headers: Mapping[str, str], default_seconds: int) -> int:
     """
     fallback = default_seconds
     h = _lower(headers)
-    raw = h.get("retry-after")
+    raw = h.get("retry-after") or h.get("x-ratelimit-reset")
 
     seconds = fallback
     if raw:
         try:
-            seconds = int(float(raw))
+            value = float(raw)
+            # Some providers expose an absolute Unix reset instead of a
+            # duration. Treat future epoch values as seconds-from-now.
+            seconds = int(value - datetime.now(timezone.utc).timestamp()) if value > 1_000_000_000 else int(value)
         except ValueError:
             seconds = fallback
 
-    return max(1, min(seconds, 300))
+    return max(1, min(seconds, 86_400))
+
+
+def parse_retry_after_body(body: bytes, default_seconds: int) -> int:
+    """Read reset metadata from a provider error body when headers omit it."""
+    try:
+        payload = json.loads(body.decode(errors="replace"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return max(1, min(default_seconds, 2_592_000))
+    error = payload.get("error") if isinstance(payload, Mapping) else None
+    source = error if isinstance(error, Mapping) else payload if isinstance(payload, Mapping) else {}
+    reset = source.get("resets_at") or source.get("reset_at")
+    if reset is not None:
+        parsed = _parse_reset(str(reset))
+        if parsed is not None:
+            return max(1, min(int((parsed - datetime.now(timezone.utc)).total_seconds()), 2_592_000))
+    try:
+        seconds = source.get("resets_in_seconds")
+        if seconds is not None:
+            return max(1, min(int(float(seconds)), 2_592_000))
+    except (TypeError, ValueError):
+        pass
+    return max(1, min(default_seconds, 2_592_000))
 
 
 def mark_cooldown(db: Session, account: AccountDb, retry_after_seconds: int) -> None:

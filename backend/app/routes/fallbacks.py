@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import config
 from app.utils import crypto, egress, openai_fallbacks, security
 from app.utils.models.api import (
     AccountStatus,
@@ -23,6 +24,7 @@ from app.utils.models.api import (
 from app.utils.postgres import OpenAIFallbackDb, UsageRecordDb, get_db
 
 router = APIRouter(tags=["OpenAI fallbacks"], prefix="/fallbacks")
+settings = config.get_settings()
 
 
 def _provider_or_404(db: Session, provider_id: uuid.UUID) -> OpenAIFallbackDb:
@@ -186,7 +188,25 @@ def test_fallback(
             if isinstance(models, list):
                 provider.model_catalog_json = json.dumps(models, separators=(",", ":"))
                 provider.model_catalog_refreshed_at = datetime.now(timezone.utc)
-            openai_fallbacks.mark_healthy(provider)
+            if settings.FALLBACK_GENERATION_CANARY_ENABLED:
+                model = next((item.get("id") for item in models or [] if isinstance(item, dict) and item.get("id")), None)
+                if not model:
+                    openai_fallbacks.mark_cooldown(provider, 60, "Health check returned no generation-capable model.")
+                else:
+                    with egress.sync_client(target, 30.0) as client:
+                        canary = client.post(
+                            openai_fallbacks.endpoint(provider, "/responses"),
+                            headers={"Authorization": f"Bearer {openai_fallbacks.api_key(provider)}", "Content-Type": "application/json"},
+                            json={"model": model, "input": "ping", "max_output_tokens": settings.FALLBACK_CANARY_MAX_OUTPUT_TOKENS, "stream": False},
+                        )
+                    if canary.is_success:
+                        openai_fallbacks.mark_healthy(provider)
+                    elif canary.status_code in {401, 403}:
+                        openai_fallbacks.mark_invalid(provider, f"Generation canary rejected with HTTP {canary.status_code}.")
+                    else:
+                        openai_fallbacks.mark_cooldown(provider, 60, f"Generation canary returned HTTP {canary.status_code}.")
+            else:
+                openai_fallbacks.mark_healthy(provider)
         else:
             openai_fallbacks.mark_cooldown(provider, 60, f"Health check returned HTTP {response.status_code}.")
     except Exception as exc:  # noqa: BLE001

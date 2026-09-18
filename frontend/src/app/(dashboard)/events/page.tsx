@@ -7,7 +7,7 @@ import { RangePicker } from "@/components/RangePicker";
 import { UserFilter } from "@/components/UserFilter";
 import { EventTypeFilter } from "@/components/EventTypeFilter";
 import { RequestCaptureOverlay } from "@/components/RequestCaptureOverlay";
-import { Button, StatusToggle, TextInput } from "@/components/ui";
+import { Button, Pagination, StatusToggle, TextInput } from "@/components/ui";
 import { formatCompactNumber, formatDateTime } from "@/lib/format";
 
 const EVENT_TYPES = [
@@ -449,94 +449,22 @@ export default function EventsPage() {
                 )}
             </section>
             {total > 0 ? (
-                <div className="flex flex-wrap items-center justify-end gap-3">
-                    <label className="text-fog-400 flex items-center gap-2 text-xs">
-                        <span>Rows</span>
-                        <select
-                            value={String(pageSize)}
-                            onChange={(event) => {
-                                const next = Number(event.target.value);
-                                if (
-                                    !PAGE_SIZE_OPTIONS.includes(
-                                        next as (typeof PAGE_SIZE_OPTIONS)[number],
-                                    )
-                                )
-                                    return;
-                                setPageSize(next);
-                                setOffset(0);
-                                updateUrl({ pageSize: String(next), page: "1" });
-                            }}
-                            className="border-ink-700 bg-ink-900 text-fog-100 rounded-lg border px-2 py-2 text-sm"
-                            aria-label="Rows per page"
-                        >
-                            {PAGE_SIZE_OPTIONS.map((option) => (
-                                <option key={option} value={option}>
-                                    {option}
-                                </option>
-                            ))}
-                        </select>
-                    </label>
-                    <button
-                        disabled={offset === 0 || loading}
-                        onClick={() => {
-                            const nextOffset = Math.max(0, offset - pageSize);
-                            setOffset(nextOffset);
-                            updateUrl({ page: String(Math.floor(nextOffset / pageSize) + 1) });
-                        }}
-                        className="border-ink-700 bg-ink-900 text-fog-200 rounded-lg border px-3 py-2 text-sm disabled:opacity-40"
-                    >
-                        Previous
-                    </button>
-                    <span className="text-fog-400 text-xs">
-                        Page {Math.floor(offset / pageSize) + 1} of{" "}
-                        {Math.max(1, Math.ceil(total / pageSize))}
-                    </span>
-                    <form
-                        className="text-fog-400 flex items-center gap-2 text-xs"
-                        onSubmit={(event) => {
-                            event.preventDefault();
-                            const field = event.currentTarget.elements.namedItem(
-                                "page",
-                            ) as HTMLInputElement;
-                            const nextPage = Math.min(
-                                Math.max(1, Number(field.value) || 1),
-                                Math.max(1, Math.ceil(total / pageSize)),
-                            );
-                            const nextOffset = (nextPage - 1) * pageSize;
-                            setOffset(nextOffset);
-                            updateUrl({ page: String(nextPage) });
-                        }}
-                    >
-                        <span>Go to</span>
-                        <input
-                            name="page"
-                            type="number"
-                            min={1}
-                            max={Math.max(1, Math.ceil(total / pageSize))}
-                            defaultValue={Math.floor(offset / pageSize) + 1}
-                            key={`${pageSize}-${offset}`}
-                            className="border-ink-700 bg-ink-900 text-fog-100 w-16 rounded-lg border px-2 py-2 text-center text-sm"
-                            aria-label="Jump to page"
-                        />
-                        <button
-                            type="submit"
-                            className="border-ink-700 bg-ink-900 text-fog-200 hover:bg-ink-800 rounded-lg border px-3 py-2 text-sm"
-                        >
-                            Go
-                        </button>
-                    </form>
-                    <button
-                        disabled={offset + pageSize >= total || loading}
-                        onClick={() => {
-                            const nextOffset = offset + pageSize;
-                            setOffset(nextOffset);
-                            updateUrl({ page: String(Math.floor(nextOffset / pageSize) + 1) });
-                        }}
-                        className="border-ink-700 bg-ink-900 text-fog-200 rounded-lg border px-3 py-2 text-sm disabled:opacity-40"
-                    >
-                        Next
-                    </button>
-                </div>
+                <Pagination
+                    total={total}
+                    page={Math.floor(offset / pageSize) + 1}
+                    pageSize={pageSize}
+                    pageSizeOptions={[...PAGE_SIZE_OPTIONS]}
+                    disabled={loading}
+                    onPageSizeChange={(next) => {
+                        setPageSize(next);
+                        setOffset(0);
+                        updateUrl({ pageSize: String(next), page: "1" });
+                    }}
+                    onPageChange={(nextPage) => {
+                        setOffset((nextPage - 1) * pageSize);
+                        updateUrl({ page: String(nextPage) });
+                    }}
+                />
             ) : null}
             {captureEventId ? (
                 <RequestCaptureOverlay

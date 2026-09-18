@@ -4,7 +4,16 @@
 // Small, dependency-free UI primitives shared across pages.
 // ---------------------------------------------------------------------------
 
-import { Check, ChevronDown, Copy, ListChecks, TriangleAlert, X } from "lucide-react";
+import {
+    Check,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    Copy,
+    ListChecks,
+    TriangleAlert,
+    X,
+} from "lucide-react";
 import { ReactNode, useEffect, useId, useRef, useState } from "react";
 
 // --- Button ----------------------------------------------------------------
@@ -117,6 +126,103 @@ export function SelectMenu({
                 </div>
             ) : null}
         </div>
+    );
+}
+
+// --- Pagination ------------------------------------------------------------
+
+export function Pagination({
+    total,
+    page,
+    pageSize,
+    pageSizeOptions = [25, 50, 75, 100],
+    onPageChange,
+    onPageSizeChange,
+    disabled = false,
+}: {
+    total: number;
+    page: number;
+    pageSize: number;
+    pageSizeOptions?: number[];
+    onPageChange: (page: number) => void;
+    onPageSizeChange?: (pageSize: number) => void;
+    disabled?: boolean;
+}) {
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const [draftPage, setDraftPage] = useState(String(page));
+
+    useEffect(() => {
+        setDraftPage(String(page));
+    }, [page]);
+
+    const goToPage = () => {
+        const parsed = Number(draftPage);
+        const nextPage = Number.isFinite(parsed)
+            ? Math.min(totalPages, Math.max(1, Math.trunc(parsed)))
+            : page;
+        setDraftPage(String(nextPage));
+        if (nextPage !== page) onPageChange(nextPage);
+    };
+
+    return (
+        <nav
+            aria-label="Pagination"
+            className="text-fog-300 flex flex-wrap items-center justify-end gap-2.5 text-xs"
+        >
+            {onPageSizeChange ? (
+                <label className="text-fog-400 flex items-center gap-2">
+                    <span>Rows</span>
+                    <SelectMenu
+                        value={String(pageSize)}
+                        options={pageSizeOptions.map((option) => ({
+                            value: String(option),
+                            label: String(option),
+                        }))}
+                        onChange={(value) => onPageSizeChange(Number(value))}
+                        ariaLabel="Rows per page"
+                        className="w-[4.75rem]"
+                    />
+                </label>
+            ) : null}
+            <Button
+                variant="ghost"
+                disabled={disabled || page <= 1}
+                onClick={() => onPageChange(page - 1)}
+                className="h-9 gap-1.5 px-3"
+            >
+                <ChevronLeft size={15} aria-hidden="true" />
+                Previous
+            </Button>
+            <label className="text-fog-400 inline-flex h-9 items-center gap-1.5 whitespace-nowrap">
+                <span>Page</span>
+                <input
+                    type="number"
+                    min={1}
+                    max={totalPages}
+                    inputMode="numeric"
+                    value={draftPage}
+                    onChange={(event) => setDraftPage(event.target.value)}
+                    onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                            event.preventDefault();
+                            goToPage();
+                        }
+                    }}
+                    aria-label="Current page"
+                    className="border-ink-600 bg-ink-900 text-fog-100 focus:border-brand-400 focus:ring-brand-500/25 h-9 w-14 rounded-md border px-2 text-center font-mono text-sm tabular-nums transition-colors outline-none focus:ring-2"
+                />
+                <span>of {totalPages}</span>
+            </label>
+            <Button
+                variant="ghost"
+                disabled={disabled || page >= totalPages}
+                onClick={() => onPageChange(page + 1)}
+                className="h-9 gap-1.5 px-3"
+            >
+                Next
+                <ChevronRight size={15} aria-hidden="true" />
+            </Button>
+        </nav>
     );
 }
 

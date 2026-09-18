@@ -14,6 +14,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import config
@@ -34,8 +35,8 @@ from app.utils import (
     usage,
     warmup,
 )
-from app.utils.models.api import AccountStatus
-from app.utils.postgres import AccountDb, ApiKeyDb, OpenAIFallbackDb, UsageRecordDb, UserDb, get_db, get_db_cm
+from app.utils.models.api import AccountStatus, ProviderHealth
+from app.utils.postgres import AccountDb, ApiKeyDb, OpenAIFallbackDb, ProxyEventDb, UserDb, get_db, get_db_cm
 
 logger = get_logger()
 settings = config.get_settings()
@@ -221,6 +222,8 @@ async def _is_model_unavailable(candidate: httpx.Response) -> bool:
     """Recognize account-specific model-access failures without masking malformed client requests."""
     if candidate.status_code not in {400, 403, 404}:
         return False
+    # Reading a response body consumes it; the bytes are retained by httpx
+    # after ``aread`` so the quota branch can parse the same 429 payload.
     body = (await candidate.aread()).decode(errors="replace").lower()
     model_failure = any(term in body for term in ("not supported", "unsupported", "not available", "no access", "does not exist"))
     return "model" in body and model_failure
@@ -253,16 +256,21 @@ async def _is_capacity_unavailable(candidate: httpx.Response) -> bool:
 class _PrefetchedResponse:
     """Small response proxy that replays bytes consumed while checking an SSE error prefix."""
 
-    def __init__(self, response: httpx.Response, prefix: bytes, iterator, capacity_error: bool) -> None:
+    def __init__(self, response: httpx.Response, prefix: bytes, iterator, capacity_error: bool, pre_output_failure: bool = False) -> None:
         self._response = response
         self._prefix = prefix
         self._iterator = iterator
         self._capacity_error = capacity_error
+        self._pre_output_failure = pre_output_failure
         self._body: Optional[bytes] = None
 
     @property
     def _proxy_capacity_error(self) -> bool:
         return self._capacity_error
+
+    @property
+    def _proxy_pre_output_failure(self) -> bool:
+        return self._pre_output_failure
 
     def __getattr__(self, name):
         return getattr(self._response, name)
@@ -323,6 +331,66 @@ def _is_pre_output_failure(lowered: str) -> bool:
     return has_failed and not has_output
 
 
+def _is_provider_error_frame(frame: bytes) -> bool:
+    """Identify an upstream failure SSE frame without exposing it downstream.
+
+    Providers can emit a capacity/error event after output has started. Once
+    bytes have reached a client we cannot safely retry on another account
+    without duplicating text, so suppress the failure and close cleanly.
+    """
+    lowered = frame.decode(errors="replace").lower()
+    has_error = any(marker in lowered for marker in _FAIL_MARKERS)
+    has_output = any(marker in lowered for marker in _OUTPUT_DELTA_MARKERS)
+    return (has_error and not has_output) or any(phrase in lowered for phrase in _CAPACITY_PHRASES)
+
+
+_SYNTHETIC_COMPLETION = (
+    b"event: response.completed\n"
+    b'data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'
+)
+
+
+def _sanitize_sse_payload(raw: bytes) -> bytes:
+    """Remove provider error frames and finish a fully-buffered stream cleanly."""
+    output = bytearray()
+    remaining = raw
+    while remaining:
+        match = re.search(br"\r?\n\r?\n", remaining)
+        if match is None:
+            if not _is_provider_error_frame(remaining):
+                output.extend(remaining)
+            break
+        end = match.end()
+        frame = remaining[: match.start()]
+        if _is_provider_error_frame(frame):
+            output.extend(_SYNTHETIC_COMPLETION)
+            return bytes(output)
+        output.extend(remaining[:end])
+        remaining = remaining[end:]
+    return bytes(output)
+
+
+async def _iter_sanitized_sse(response: httpx.Response):
+    """Stream SSE frames while never forwarding provider failure events."""
+    buffer = bytearray()
+    async for chunk in response.aiter_bytes():
+        buffer.extend(chunk)
+        while True:
+            match = re.search(br"\r?\n\r?\n", buffer)
+            if match is None:
+                break
+            end = match.end()
+            frame = bytes(buffer[: match.start()])
+            separator = match.group(0)
+            del buffer[:end]
+            if _is_provider_error_frame(frame):
+                yield _SYNTHETIC_COMPLETION
+                return
+            yield bytes(frame) + separator
+    if buffer and not _is_provider_error_frame(bytes(buffer)):
+        yield bytes(buffer)
+
+
 async def _empty_aiter():
     """Yield nothing -- used as the remaining-bytes iterator for fully-read responses."""
     return
@@ -342,7 +410,10 @@ async def _prepare_candidate(candidate: httpx.Response):
        delta  -> the request failed before generating; the caller can safely
        retry on the next account (``capacity_error=True``).
     3. A safety bound is reached (64 KB or 90 s total prefetch time) without
-       either signal -> treat this attempt as failed and rotate accounts.
+       either signal -> begin streaming the buffered response.  A slow model
+       can legitimately emit metadata/keepalives before its first output;
+       treating that silence as capacity exhaustion incorrectly parks healthy
+       fallbacks in ``COOLDOWN``.
 
     The original bug forwarded the buffered keepalives after a prefix timeout;
     OpenAI could then emit a late ``response.failed`` capacity event directly
@@ -368,26 +439,30 @@ async def _prepare_candidate(candidate: httpx.Response):
         if raw.lstrip().startswith((b"event:", b"data:")):
             is_sse = True
         else:
-            candidate.extensions["proxy_capacity_error"] = any(p in lowered for p in _CAPACITY_PHRASES) or _is_pre_output_failure(lowered)
+            candidate.extensions["proxy_capacity_error"] = any(p in lowered for p in _CAPACITY_PHRASES)
+            candidate.extensions["proxy_pre_output_failure"] = _is_pre_output_failure(lowered)
             return candidate
 
     if is_sse and hasattr(candidate, "_content") and candidate._content:
         # We already consumed the body via aread() above; wrap it as a
         # _PrefetchedResponse so the SSE prefetch logic can inspect it.
         lowered = candidate._content.decode(errors="replace").lower()
-        is_capacity_error = any(p in lowered for p in _CAPACITY_PHRASES) or _is_pre_output_failure(lowered)
+        is_capacity_error = any(p in lowered for p in _CAPACITY_PHRASES)
+        is_pre_output_failure = _is_pre_output_failure(lowered)
         if is_capacity_error:
             return _PrefetchedResponse(
                 candidate,
                 candidate._content,
                 _empty_aiter(),
                 True,
+                is_pre_output_failure,
             )
         return _PrefetchedResponse(
             candidate,
             candidate._content,
             _empty_aiter(),
             False,
+            is_pre_output_failure,
         )
 
     iterator = candidate.aiter_bytes().__aiter__()
@@ -399,8 +474,8 @@ async def _prepare_candidate(candidate: httpx.Response):
     while len(prefix) < 64 * 1024:
         elapsed = asyncio.get_event_loop().time()
         if elapsed >= prefetch_deadline:
-            logger.warning("Upstream produced no output before the SSE prefetch deadline; treating as capacity unavailable")
-            return _PrefetchedResponse(candidate, bytes(prefix), iterator, True)
+            logger.warning("Upstream produced no output before the SSE prefetch deadline; streaming the response")
+            return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False)
         remaining = max(1, prefetch_deadline - elapsed)
         try:
             timeout = min(
@@ -414,8 +489,8 @@ async def _prepare_candidate(candidate: httpx.Response):
         except StopAsyncIteration:
             break
         except (asyncio.TimeoutError, TimeoutError):
-            logger.warning("Upstream produced no output within the SSE prefetch timeout; treating as capacity unavailable")
-            return _PrefetchedResponse(candidate, bytes(prefix), iterator, True)
+            logger.warning("Upstream produced no output within the SSE prefetch timeout; streaming the response")
+            return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False)
         chunks_read += 1
         prefix.extend(chunk)
         lowered = bytes(prefix).decode(errors="replace").lower()
@@ -427,6 +502,7 @@ async def _prepare_candidate(candidate: httpx.Response):
                 bytes(prefix),
                 iterator,
                 True,
+                _is_pre_output_failure(lowered),
             )
 
         has_output = any(m in lowered for m in _OUTPUT_DELTA_MARKERS)
@@ -434,13 +510,13 @@ async def _prepare_candidate(candidate: httpx.Response):
 
         # Real output is flowing -> response is healthy, start streaming.
         if has_output or completed:
-            return _PrefetchedResponse(candidate, bytes(prefix), iterator, False)
+            return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False)
 
         if _is_pre_output_failure(lowered):
-            return _PrefetchedResponse(candidate, bytes(prefix), iterator, True)
+            return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, True)
 
-    logger.warning("Upstream filled the SSE prefetch buffer without producing output; treating as capacity unavailable")
-    return _PrefetchedResponse(candidate, bytes(prefix), iterator, True)
+    logger.warning("Upstream filled the SSE prefetch buffer without producing output; streaming the response")
+    return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False)
 
 
 async def _is_empty_upstream_404(candidate: httpx.Response) -> bool:
@@ -478,6 +554,21 @@ def _emit_event(
             message=message,
             metadata=merged_metadata,
         )
+
+
+def _upstream_diagnostics(candidate: httpx.Response, *, stream_started: bool = False, terminal_event: str | None = None) -> dict:
+    """Return non-sensitive upstream facts for incident correlation."""
+    headers = {key.lower(): value for key, value in candidate.headers.items()}
+    target = candidate.extensions.get("proxy_egress_target")
+    return {
+        "upstream_status": candidate.status_code,
+        "provider_request_id": headers.get("x-request-id") or headers.get("request-id") or headers.get("anthropic-request-id"),
+        "retry_after": headers.get("retry-after") or headers.get("x-ratelimit-reset"),
+        "egress_target_id": getattr(target, "id", None),
+        "egress_public_ip": getattr(target, "public_ip", None),
+        "stream_started": stream_started,
+        "stream_terminal_event": terminal_event,
+    }
 
 
 def _record_usage_safe(
@@ -559,11 +650,13 @@ def _enforce_client_limits(db: Session, key: ApiKeyDb, user: Optional[UserDb]) -
     window_start = now - timedelta(seconds=60)
 
     if user is not None and user.rate_limit_per_minute and user.rate_limit_per_minute > 0:
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"), {"lock_key": f"user-rate:{user.id}"})
         count = (
-            db.query(UsageRecordDb)
+            db.query(ProxyEventDb)
             .filter(
-                UsageRecordDb.user_id == user.id,
-                UsageRecordDb.created_at >= window_start,
+                ProxyEventDb.user_id == user.id,
+                ProxyEventDb.event_type == "request.reserved",
+                ProxyEventDb.created_at >= window_start,
             )
             .count()
         )
@@ -606,11 +699,13 @@ def _enforce_client_limits(db: Session, key: ApiKeyDb, user: Optional[UserDb]) -
 
     rate_limit = key.rate_limit_per_minute if key.rate_limit_per_minute is not None else settings.DEFAULT_KEY_RATE_LIMIT_PER_MINUTE
     if rate_limit and rate_limit > 0:
+        db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"), {"lock_key": f"key-rate:{key.id}"})
         count = (
-            db.query(UsageRecordDb)
+            db.query(ProxyEventDb)
             .filter(
-                UsageRecordDb.api_key_id == key.id,
-                UsageRecordDb.created_at >= window_start,
+                ProxyEventDb.api_key_id == key.id,
+                ProxyEventDb.event_type == "request.reserved",
+                ProxyEventDb.created_at >= window_start,
             )
             .count()
         )
@@ -631,6 +726,21 @@ def _enforce_client_limits(db: Session, key: ApiKeyDb, user: Optional[UserDb]) -
                 detail="API key rate limit exceeded; slow down.",
                 headers={"Retry-After": "60"},
             )
+
+    # Reserve this request in the same transaction as the advisory locks. A
+    # second concurrent request therefore observes the reservation instead of
+    # racing against a usage row that is only written after streaming ends.
+    db.add(
+        ProxyEventDb(
+            id=uuid.uuid4(),
+            request_id=f"reservation_{uuid.uuid4().hex}",
+            user_id=user.id if user is not None else None,
+            api_key_id=key.id,
+            event_type="request.reserved",
+            metadata_json=json.dumps({"scope": "client_rate_limit"}, separators=(",", ":")),
+        )
+    )
+    db.flush()
     if key.monthly_token_budget and key.monthly_token_budget > 0:
         if usage.monthly_token_usage_for_key(db, key.id) >= key.monthly_token_budget:
             notifications.enqueue_client_limit(
@@ -737,7 +847,7 @@ async def _send_candidate(
 ) -> httpx.Response:
     lease = account_limiter.try_acquire(
         account.id,
-        settings.MAX_CONCURRENT_REQUESTS_PER_ACCOUNT,
+        settings.concurrency_limit_for(getattr(request.state, "proxy_model", None), getattr(account, "tier", None)),
         getattr(request.state, "user_priority", 1),
     )
     headers = _upstream_headers(request.headers, access_token, account)
@@ -1066,6 +1176,7 @@ async def proxy_responses(
         "thinking_level": request_reasoning,
         "user_priority": user.priority,
     }
+    request.state.proxy_model = request_model
     _emit_event(request, "request.received", user_id=user.id, api_key_id=key.id, metadata={"path": request.url.path, "method": request.method})
     _set_archive_metadata(
         request,
@@ -1085,12 +1196,27 @@ async def proxy_responses(
     chosen_fallback_id: Optional[uuid.UUID] = None
 
     max_attempts = db.query(AccountDb).count()
+    pool_wait_deadline = asyncio.get_running_loop().time() + max(0, settings.POOL_WAIT_TIMEOUT_SECONDS)
+    pool_wait_slots = max(0, int(settings.POOL_WAIT_TIMEOUT_SECONDS / max(settings.POOL_WAIT_POLL_INTERVAL_SECONDS, 0.1))) + 1
     model_rejected = False
 
-    for _ in range(max_attempts):
+    for _ in range(max_attempts + pool_wait_slots):
         account = rotation.select_account(db, user, excluded, model=str(request_model) if request_model else None)
         if account is None:
-            break
+            # Cooldowns and quota refreshes are asynchronous. Hold the request
+            # for a bounded period and re-read the database before giving up;
+            # this prevents a short pool dip from becoming a client 503.
+            now_monotonic = asyncio.get_running_loop().time()
+            recoverable = db.query(AccountDb).filter(
+                AccountDb.status != AccountStatus.DISABLED,
+                AccountDb.provider_health != ProviderHealth.REAUTH_REQUIRED,
+            ).count() > 0
+            if not recoverable or now_monotonic >= pool_wait_deadline:
+                break
+            await asyncio.sleep(min(settings.POOL_WAIT_POLL_INTERVAL_SECONDS, pool_wait_deadline - now_monotonic))
+            db.expire_all()
+            excluded.clear()
+            continue
         if not account.chatgpt_account_id:
             excluded.add(account.id)
             continue
@@ -1151,6 +1277,7 @@ async def proxy_responses(
                 account_id=account.id,
                 status_code=candidate.status_code,
                 message="Provider reported model capacity",
+                metadata={**_upstream_diagnostics(candidate), "failure_class": "model_capacity"},
             )
             await candidate.aclose()
             rotation.mark_cooldown(db, account, account.cooldown_seconds)
@@ -1171,7 +1298,34 @@ async def proxy_responses(
             model_rejected = bool(request_model) or model_rejected
             continue
 
+        # A generic pre-output failure (for example ``server_is_overloaded``)
+        # is retryable, but it is not evidence that the account's quota is
+        # exhausted. Never pass a 200/SSE error frame through to the client.
+        if (
+            getattr(candidate, "_proxy_pre_output_failure", False)
+            or candidate.extensions.get("proxy_pre_output_failure", False)
+            or candidate.status_code >= 500
+        ):
+            await candidate.aclose()
+            transient_seconds = max(1, min(settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS, account.cooldown_seconds))
+            rotation.mark_cooldown(db, account, transient_seconds)
+            _emit_event(
+                request,
+                "account.transient_error",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                status_code=candidate.status_code,
+                message="Provider returned a retryable pre-output failure; account quota was not marked exhausted.",
+                metadata={**_upstream_diagnostics(candidate), "failure_class": "transient_upstream"},
+            )
+            excluded.add(account.id)
+            continue
+
+        rate_limit_body = await candidate.aread() if candidate.status_code == 429 else b""
         reached_type = rotation.update_quota_from_headers(account, candidate.headers)
+        body_reached_type, body_reset_at = rotation.apply_rate_limit_body(account, rate_limit_body)
+        reached_type = body_reached_type or reached_type
         quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
         if (account.weekly_used_pct or 0) >= 1.0:
             try:
@@ -1201,6 +1355,8 @@ async def proxy_responses(
                 candidate.headers,
                 account.cooldown_seconds,
             )
+            if body_reset_at is not None:
+                retry_after = max(1, int((body_reset_at - datetime.now(timezone.utc)).total_seconds()))
             await candidate.aclose()
             rotation.mark_cooldown(db, account, retry_after)
             _emit_event(
@@ -1211,6 +1367,7 @@ async def proxy_responses(
                 account_id=account.id,
                 status_code=429,
                 message=f"Cooling down for {retry_after}s",
+                metadata={**_upstream_diagnostics(candidate), "failure_class": "account_quota", "provider_reset_at": body_reset_at},
             )
             excluded.add(account.id)
             continue
@@ -1315,6 +1472,31 @@ async def proxy_responses(
             model_rejected = bool(request_model) or model_rejected
             continue
 
+        # Match subscription routing: an HTTP 200 SSE error is not a usable
+        # response and must never be forwarded to an SDK as a fatal provider
+        # event. It receives a short transient circuit, not a quota cooldown.
+        if getattr(candidate, "_proxy_pre_output_failure", False) or candidate.extensions.get("proxy_pre_output_failure", False):
+            failure_status = candidate.status_code
+            await candidate.aclose()
+            openai_fallbacks.mark_cooldown(
+                fallback,
+                max(1, settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS),
+                "Transient pre-output provider failure.",
+            )
+            db.commit()
+            excluded_fallbacks.add(fallback.id)
+            _emit_event(
+                request,
+                "fallback.transient_error",
+                user_id=user.id,
+                api_key_id=key.id,
+                fallback_provider_id=fallback.id,
+                status_code=failure_status,
+                message="Fallback emitted a retryable pre-output failure; it was suppressed.",
+                metadata={"failure_class": "transient_upstream"},
+            )
+            continue
+
         if candidate.status_code == 401:
             await candidate.aclose()
             openai_fallbacks.mark_invalid(
@@ -1326,6 +1508,8 @@ async def proxy_responses(
             continue
         if candidate.status_code == 429 or candidate.status_code >= 500:
             retry_after = _fallback_retry_after(candidate)
+            if candidate.status_code == 429:
+                retry_after = max(retry_after, rotation.parse_retry_after_body(await candidate.aread(), 60))
             status_code = candidate.status_code
             await candidate.aclose()
             openai_fallbacks.mark_cooldown(
@@ -1427,6 +1611,8 @@ async def proxy_responses(
     if convert_stream_to_response and response_status < 400:
         raw = await response.aread()
         await response.aclose()
+        if "text/event-stream" in content_type or raw.lstrip().startswith((b"event:", b"data:")):
+            raw = _sanitize_sse_payload(raw)
         accumulator = usage.StreamUsageAccumulator(
             fallback_model=request_model,
             reasoning_level=request_reasoning,
@@ -1508,7 +1694,7 @@ async def proxy_responses(
 
         async def chat_stream_body():
             try:
-                async for chunk in response.aiter_bytes():
+                async for chunk in _iter_sanitized_sse(response):
                     accumulator.feed(chunk)
                     for translated in translator.feed(chunk):
                         yield translated
@@ -1592,7 +1778,7 @@ async def proxy_responses(
 
     async def stream_body():
         try:
-            async for chunk in response.aiter_bytes():
+            async for chunk in _iter_sanitized_sse(response):
                 accumulator.feed(chunk)
                 yield chunk
         finally:

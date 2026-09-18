@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Cable, Gauge, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
+import { Gauge, KeyRound, RefreshCw, ShieldCheck } from "lucide-react";
 import { api } from "@/lib/api";
 import { AccountStatus, EgressTarget, OpenAIFallback, ProviderHealth } from "@/lib/types";
 import { formatDateTime, formatUsd } from "@/lib/format";
@@ -146,9 +146,6 @@ export default function FallbacksPage() {
         <div className="space-y-5">
             <header className="flex flex-wrap items-start justify-between gap-4">
                 <div>
-                    <div className="text-brand-300 mb-2 flex items-center gap-2 text-xs font-semibold tracking-[0.18em] uppercase">
-                        <Cable size={15} strokeWidth={1.8} /> Safety net
-                    </div>
                     <h1 className="text-fog-100 font-serif text-2xl font-semibold tracking-tight">
                         API fallbacks
                     </h1>

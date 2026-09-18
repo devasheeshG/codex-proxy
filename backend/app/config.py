@@ -1,6 +1,7 @@
 # Path: app/config.py
 # Description: Application settings plus the fixed Codex, ChatGPT, OAuth, and proxy endpoints.
 
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -53,6 +54,16 @@ DEFAULT_MAX_FAILOVER_ATTEMPTS = 3
 # subscription tier with controlled parallel probes, then make this policy
 # model/tier-aware instead of relying on this conservative default.
 DEFAULT_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT = 3
+# A request that finds no immediately eligible account waits briefly for a
+# cooldown/refresh worker to make one available.  This avoids converting a
+# transient pool dip into a client-visible 503 while keeping the request
+# bounded so ASGI workers are not held forever.
+DEFAULT_POOL_WAIT_TIMEOUT_SECONDS = 150
+DEFAULT_POOL_WAIT_POLL_INTERVAL_SECONDS = 2
+# A pre-output provider error is retryable, but it is not proof that the
+# account's quota is exhausted.  Keep the transient circuit short and distinct
+# from the account's configured 429 cooldown.
+DEFAULT_TRANSIENT_UPSTREAM_COOLDOWN_SECONDS = 5
 
 
 class Settings(BaseSettings):
@@ -76,7 +87,7 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60 * 12
 
     QUOTA_REFRESH_INTERVAL_SECONDS: int = 60
-    WARMUP_ENABLED: bool = True
+    WARMUP_ENABLED: bool = False
     WARMUP_TRIGGER_POOL_USAGE_PCT: float = 0.10
     WARMUP_WEEKLY_RESERVE_PCT: float = 0.90
     WARMUP_MODEL: str = "gpt-5.6-luna"
@@ -84,6 +95,15 @@ class Settings(BaseSettings):
     ALLOWED_MODELS: str = ""
     DEFAULT_KEY_RATE_LIMIT_PER_MINUTE: int = 0
     MAX_CONCURRENT_REQUESTS_PER_ACCOUNT: int = DEFAULT_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT
+    MODEL_CONCURRENCY_LIMITS_JSON: str = ""
+    TIER_CONCURRENCY_LIMITS_JSON: str = ""
+    POOL_WAIT_TIMEOUT_SECONDS: int = DEFAULT_POOL_WAIT_TIMEOUT_SECONDS
+    POOL_WAIT_POLL_INTERVAL_SECONDS: float = DEFAULT_POOL_WAIT_POLL_INTERVAL_SECONDS
+    TRANSIENT_UPSTREAM_COOLDOWN_SECONDS: int = DEFAULT_TRANSIENT_UPSTREAM_COOLDOWN_SECONDS
+    # Admin fallback health checks perform a one-token generation canary after
+    # the catalog request, proving the credential can actually infer.
+    FALLBACK_GENERATION_CANARY_ENABLED: bool = True
+    FALLBACK_CANARY_MAX_OUTPUT_TOKENS: int = 1
     CODEX_CLIENT_VERSION: str = DEFAULT_CODEX_CLIENT_VERSION
     # JSON array of approved outbound paths. An empty value preserves the
     # historical direct server route. See README for proxy/local target shapes.
@@ -164,6 +184,20 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    def concurrency_limit_for(self, model: str | None = None, tier: str | None = None) -> int:
+        """Resolve the most specific configured model/tier concurrency cap."""
+        for raw, key in ((self.MODEL_CONCURRENCY_LIMITS_JSON, model), (self.TIER_CONCURRENCY_LIMITS_JSON, tier)):
+            if not raw.strip() or not key:
+                continue
+            try:
+                values = json.loads(raw)
+                value = values.get(key) if isinstance(values, dict) else None
+                if value is not None:
+                    return max(1, min(int(value), 32))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+        return max(1, min(int(self.MAX_CONCURRENT_REQUESTS_PER_ACCOUNT), 32))
 
 
 @lru_cache

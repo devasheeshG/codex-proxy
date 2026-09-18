@@ -142,6 +142,14 @@ def _send(account: AccountDb, access_token: str, target: egress.EgressTarget) ->
         if response.status_code == 401:
             raise provider_health.ProviderReauthenticationRequired("Authentication is no longer valid. Re-authenticate this account to restore it.")
         response.raise_for_status()
+        lowered = response.content.decode(errors="replace").lower()
+        # Codex can report a terminal inference failure inside an HTTP 200 SSE
+        # body. Treating that as a successful warm-up made the dashboard claim
+        # an account was healthy while the provider had produced no output.
+        failed = any(marker in lowered for marker in ("response.failed", "event: error", '"type":"error"', '"type": "error"'))
+        completed = "response.completed" in lowered or "response.output_text.delta" in lowered
+        if failed and not completed:
+            raise WarmupFailed("The provider returned a failed SSE warm-up response.")
         return response
     finally:
         client.close()
