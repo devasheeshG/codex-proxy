@@ -54,8 +54,52 @@ function cooldownIsActive(account: Account, now = Date.now()): boolean {
     );
 }
 
+type ExhaustedQuotaWindow = {
+    label: string;
+    resetAt: string | null;
+    fraction: number | null;
+};
+
+/**
+ * A provider quota exhaustion is intentionally kept in the internal
+ * COOLDOWN lifecycle state so rotation cannot select the account before its
+ * reset. It is not, however, a temporary transport cooldown and must be
+ * presented differently in the dashboard.
+ */
+function exhaustedQuotaWindow(account: Account): ExhaustedQuotaWindow | null {
+    const windows: ExhaustedQuotaWindow[] = [
+        {
+            label: "5-hour limit",
+            resetAt: account.five_hour_reset_at,
+            fraction: account.five_hour_used_pct,
+        },
+        {
+            label: "Weekly limit",
+            resetAt: account.weekly_reset_at,
+            fraction: account.weekly_used_pct,
+        },
+        {
+            label: "Monthly limit",
+            resetAt: account.monthly_reset_at,
+            fraction: account.monthly_used_pct,
+        },
+    ];
+
+    const exhausted = windows.filter((window) => window.fraction !== null && window.fraction >= 1);
+    if (exhausted.length === 0) return null;
+
+    // If multiple windows are exhausted, show the latest reset because that
+    // is the actual point at which the account can return to rotation.
+    return exhausted.reduce((latest, window) => {
+        if (!latest.resetAt) return window;
+        if (!window.resetAt) return latest;
+        return Date.parse(window.resetAt) > Date.parse(latest.resetAt) ? window : latest;
+    });
+}
+
 function statusBadge(account: Account) {
     if (account.status === "DISABLED") return <Badge tone="bad">Disabled</Badge>;
+    if (exhaustedQuotaWindow(account)) return <Badge tone="bad">Limit exhausted</Badge>;
     if (cooldownIsActive(account)) return <Badge tone="warn">Cooldown</Badge>;
     return <Badge tone="good">Active</Badge>;
 }
@@ -867,7 +911,21 @@ export default function AccountsPage() {
                                                                     </div>
                                                                 </div>
 
-                                                                {cooldownIsActive(account) ? (
+                                                                {exhaustedQuotaWindow(account) ? (
+                                                                    <div className="border-bad-500/30 bg-bad-500/10 text-bad-500 mt-3 rounded-md border px-2.5 py-1.5 text-[11px]">
+                                                                        {
+                                                                            exhaustedQuotaWindow(
+                                                                                account,
+                                                                            )!.label
+                                                                        }{" "}
+                                                                        exhausted ·{" "}
+                                                                        {formatCountdown(
+                                                                            exhaustedQuotaWindow(
+                                                                                account,
+                                                                            )!.resetAt,
+                                                                        )}
+                                                                    </div>
+                                                                ) : cooldownIsActive(account) ? (
                                                                     <div className="border-warn-500/30 bg-warn-500/10 text-warn-500 mt-3 rounded-md border px-2.5 py-1.5 text-[11px]">
                                                                         Temporarily cooling down ·{" "}
                                                                         {formatCountdown(

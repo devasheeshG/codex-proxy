@@ -9,7 +9,7 @@ class AccountStatus(str, Enum):
 
     ACTIVE = "ACTIVE"  # eligible for rotation
     DISABLED = "DISABLED"  # manually parked (e.g. banned / removed)
-    COOLDOWN = "COOLDOWN"  # temporarily resting after a 429
+    COOLDOWN = "COOLDOWN"  # unavailable until retry delay or provider quota reset
 
 
 class ProviderHealth(str, Enum):
