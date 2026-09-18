@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.model_catalog import MODEL_IDS
+from app.model_catalog import configured_model_ids
 from app.utils import security
 from app.utils.postgres import UserDb, get_db
 
@@ -22,5 +22,5 @@ def list_user_lookups(
 
 @router.get("/models")
 def list_model_lookups(_: str = Depends(security.require_admin)) -> dict:  # noqa: B008
-    """Return the fixed model catalog used by analytics filters."""
-    return {"models": list(MODEL_IDS)}
+    """Return the configured model catalog used by analytics filters."""
+    return {"models": list(configured_model_ids())}

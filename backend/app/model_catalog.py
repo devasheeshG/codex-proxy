@@ -1,13 +1,16 @@
-"""Fixed model catalog exposed by the proxy.
+"""Configured model catalog exposed by the proxy.
 
 Model discovery must be deterministic and local: querying every pooled account
 made each Codex CLI startup wait several seconds and amplified provider load.
-Update this tuple deliberately when the supported GPT 5.6/6 lineup changes.
-`codex-auto-review` is the internal Codex review model used by browser tooling;
-it must remain discoverable even though it is not part of the public GPT lineup.
+The default lineup is kept here for backwards-compatible deployments, while
+``ALLOWED_MODELS`` in ``.env`` can override it without rebuilding the image.
 """
 
-MODEL_IDS: tuple[str, ...] = (
+from collections.abc import Iterable
+
+from app.config import get_settings
+
+DEFAULT_MODEL_IDS: tuple[str, ...] = (
     "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
@@ -15,7 +18,18 @@ MODEL_IDS: tuple[str, ...] = (
     "codex-auto-review",
 )
 
+# Backwards-compatible import for integrations that used the old constant.
+MODEL_IDS = DEFAULT_MODEL_IDS
 
-def codex_catalog() -> dict[str, list[dict[str, str]]]:
+
+def configured_model_ids(raw: str | None = None) -> tuple[str, ...]:
+    """Return the normalized allowlist from ``ALLOWED_MODELS`` or defaults."""
+    value = get_settings().ALLOWED_MODELS if raw is None else raw
+    models = tuple(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+    return models or DEFAULT_MODEL_IDS
+
+
+def codex_catalog(model_ids: Iterable[str] | None = None) -> dict[str, list[dict[str, str]]]:
     """Return a fresh Codex-shaped catalog so callers can safely filter it."""
-    return {"models": [{"slug": model_id} for model_id in MODEL_IDS]}
+    ids = configured_model_ids() if model_ids is None else tuple(model_ids)
+    return {"models": [{"slug": model_id} for model_id in ids]}

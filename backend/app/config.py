@@ -80,6 +80,8 @@ class Settings(BaseSettings):
     WARMUP_TRIGGER_POOL_USAGE_PCT: float = 0.10
     WARMUP_WEEKLY_RESERVE_PCT: float = 0.90
     WARMUP_MODEL: str = "gpt-5.6-luna"
+    # Comma-separated local model allowlist. Blank keeps the built-in lineup.
+    ALLOWED_MODELS: str = ""
     DEFAULT_KEY_RATE_LIMIT_PER_MINUTE: int = 0
     MAX_CONCURRENT_REQUESTS_PER_ACCOUNT: int = DEFAULT_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT
     CODEX_CLIENT_VERSION: str = DEFAULT_CODEX_CLIENT_VERSION

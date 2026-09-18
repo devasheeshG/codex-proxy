@@ -10,7 +10,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.logger import get_logger
-from app.model_catalog import MODEL_IDS
+from app.model_catalog import configured_model_ids
 from app.utils import request_policy, security, usage
 from app.utils.models.api import (
     ApiKey,
@@ -100,7 +100,7 @@ def _build_users(db: Session, users: list[UserDb]) -> list[User]:
 def _known_model_options(db: Session) -> list[str]:
     """Return the deliberately supported models without database/provider discovery."""
     del db  # Retain the helper signature used by the API route and tests.
-    return list(MODEL_IDS)
+    return list(configured_model_ids())
 
 
 @router.get(
@@ -176,7 +176,7 @@ def refresh_model_options(
     _: str = Depends(security.require_admin),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ModelOptionsResponse:
-    """Compatibility endpoint; the supported catalog is intentionally fixed."""
+    """Compatibility endpoint returning the configured local catalog."""
     return ModelOptionsResponse(models=_known_model_options(db))
 
 
