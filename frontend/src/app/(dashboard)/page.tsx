@@ -11,6 +11,7 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Cpu } from "lucide-react";
 import { api } from "@/lib/api";
 import {
@@ -78,6 +79,26 @@ function thisMonth(): TimeRange {
 }
 
 export default function OverviewPage() {
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+    const queryString = searchParams.toString();
+    const query = useMemo(() => {
+        const params = new URLSearchParams(queryString);
+        const fallback = thisMonth();
+        const rangeLabel = params.get("range");
+        return {
+            range: {
+                start:
+                    params.get("start") || (rangeLabel === "All time" ? undefined : fallback.start),
+                end: params.get("end") || fallback.end,
+                label: rangeLabel || fallback.label,
+            } satisfies TimeRange,
+            userId: params.get("user") || null,
+            model: params.get("model") || "",
+        };
+    }, [queryString]);
+    const [queryHydrated, setQueryHydrated] = useState(false);
     const [range, setRange] = useState<TimeRange>(thisMonth);
 
     const [stats, setStats] = useState<OverviewStats | null>(null);
@@ -97,6 +118,28 @@ export default function OverviewPage() {
     const [filterUserId, setFilterUserId] = useState<string | null>(null);
     const [modelOptions, setModelOptions] = useState<string[]>([]);
     const [filterModel, setFilterModel] = useState("");
+
+    const updateUrl = useCallback(
+        (updates: Record<string, string | null | undefined>) => {
+            const params = new URLSearchParams(queryString);
+            Object.entries(updates).forEach(([key, value]) => {
+                if (value === null || value === undefined || value === "") params.delete(key);
+                else params.set(key, value);
+            });
+            const nextQueryString = params.toString();
+            router.replace(nextQueryString ? `${pathname}?${nextQueryString}` : pathname, {
+                scroll: false,
+            });
+        },
+        [pathname, queryString, router],
+    );
+
+    useEffect(() => {
+        setRange(query.range);
+        setFilterUserId(query.userId);
+        setFilterModel(query.model);
+        setQueryHydrated(true);
+    }, [query]);
 
     useEffect(() => {
         api.analyticsUsers()
@@ -186,13 +229,15 @@ export default function OverviewPage() {
 
     // Reset to the first page and reload everything when the range or user filter changes.
     useEffect(() => {
+        if (!queryHydrated) return;
         setOffset(0);
         void loadAnalytics(range, filterUserId, filterModel || undefined);
-    }, [range, filterModel, filterUserId, loadAnalytics]);
+    }, [range, filterModel, filterUserId, loadAnalytics, queryHydrated]);
 
     useEffect(() => {
+        if (!queryHydrated) return;
         void loadUsage(offset, range, filterUserId, filterModel || undefined);
-    }, [offset, range, filterModel, filterUserId, loadUsage]);
+    }, [offset, range, filterModel, filterUserId, loadUsage, queryHydrated]);
 
     // --- auto-refresh --------------------------------------------------------
     const [autoRefresh, setAutoRefresh] = useState(false);
@@ -389,14 +434,35 @@ export default function OverviewPage() {
                     >
                         {refreshing ? "Refreshing…" : "Refresh"}
                     </Button>
-                    <RangePicker value={range} onChange={setRange} />
-                    <UserFilter users={allUsers} value={filterUserId} onChange={setFilterUserId} />
+                    <RangePicker
+                        value={range}
+                        onChange={(next) => {
+                            setRange(next);
+                            setOffset(0);
+                            updateUrl({
+                                start: next.start,
+                                end: next.end,
+                                range: next.label,
+                                page: "1",
+                            });
+                        }}
+                    />
+                    <UserFilter
+                        users={allUsers}
+                        value={filterUserId}
+                        onChange={(next) => {
+                            setFilterUserId(next);
+                            setOffset(0);
+                            updateUrl({ user: next, page: "1" });
+                        }}
+                    />
                     <EventTypeFilter
                         value={filterModel}
                         options={modelOptions}
                         onChange={(next) => {
                             setFilterModel(next);
                             setOffset(0);
+                            updateUrl({ model: next, page: "1" });
                         }}
                         label="Model"
                         allLabel="All models"

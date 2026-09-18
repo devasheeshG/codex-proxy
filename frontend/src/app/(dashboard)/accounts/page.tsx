@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { AlertTriangle, Check, ListChecks } from "lucide-react";
 import { api, ApiError } from "@/lib/api";
 import {
@@ -174,6 +175,10 @@ function egressTargetLabel(account: Account, targets: EgressTarget[]): string {
 }
 
 export default function AccountsPage() {
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+    const queryString = searchParams.toString();
     const [accounts, setAccounts] = useState<Account[] | null>(null);
     const [egressTargets, setEgressTargets] = useState<EgressTarget[]>([]);
     const [savedPriorities, setSavedPriorities] = useState<Record<string, number>>({});
@@ -197,6 +202,30 @@ export default function AccountsPage() {
     const [deleting, setDeleting] = useState(false);
     const [, tick] = useState(0);
     const loadRequestId = useRef(0);
+
+    const updateUrl = useCallback(
+        (updates: Record<string, string | null | undefined>) => {
+            const params = new URLSearchParams(queryString);
+            Object.entries(updates).forEach(([key, value]) => {
+                if (value === null || value === undefined || value === "") params.delete(key);
+                else params.set(key, value);
+            });
+            const nextQueryString = params.toString();
+            router.replace(nextQueryString ? `${pathname}?${nextQueryString}` : pathname, {
+                scroll: false,
+            });
+        },
+        [pathname, queryString, router],
+    );
+
+    useEffect(() => {
+        const params = new URLSearchParams(queryString);
+        const candidate = params.get("section");
+        if (candidate === "all" || candidate === "authenticated" || candidate === "usable") {
+            setAccountFilter(candidate);
+        }
+        setAccountSearch(params.get("search") ?? "");
+    }, [queryString]);
 
     useEffect(() => {
         const timer = window.setInterval(() => tick((value) => value + 1), 1000);
@@ -398,7 +427,11 @@ export default function AccountsPage() {
                     <TextInput
                         type="search"
                         value={accountSearch}
-                        onChange={(event) => setAccountSearch(event.target.value)}
+                        onChange={(event) => {
+                            const next = event.target.value;
+                            setAccountSearch(next);
+                            updateUrl({ search: next });
+                        }}
                         placeholder="Search name, email, or team…"
                         aria-label="Search accounts by name, email, or team"
                     />
@@ -407,7 +440,10 @@ export default function AccountsPage() {
                     <Segmented
                         options={ACCOUNT_FILTER_OPTIONS}
                         value={accountFilter}
-                        onChange={setAccountFilter}
+                        onChange={(next) => {
+                            setAccountFilter(next);
+                            updateUrl({ section: next });
+                        }}
                         label="Filter accounts"
                     />
                     <Button variant="ghost" onClick={() => void load(true)}>
@@ -540,7 +576,10 @@ export default function AccountsPage() {
                                                 account.provider_health === "DEGRADED" ||
                                                 account.provider_health === "UNKNOWN" ||
                                                 healthIsStale(account);
-                                            const assignedEgress = egressTargetLabel(account, egressTargets);
+                                            const assignedEgress = egressTargetLabel(
+                                                account,
+                                                egressTargets,
+                                            );
                                             return (
                                                 <div
                                                     key={account.id}
@@ -656,7 +695,8 @@ export default function AccountsPage() {
                                                                                 "Email unavailable"}
                                                                         </div>
                                                                         <div className="text-fog-500 mt-1 truncate text-[11px]">
-                                                                            Egress · {assignedEgress}
+                                                                            Egress ·{" "}
+                                                                            {assignedEgress}
                                                                         </div>
                                                                         {false &&
                                                                         account.provider_health ===

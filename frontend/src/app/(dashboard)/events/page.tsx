@@ -1,5 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { ProxyEvent, TimeRange, UserLookup } from "@/lib/types";
 import { RangePicker } from "@/components/RangePicker";
@@ -29,7 +30,8 @@ const initialRange = (): TimeRange => {
         label: "This month",
     };
 };
-const PAGE_SIZE = 50;
+const PAGE_SIZE_OPTIONS = [25, 50, 75, 100] as const;
+const DEFAULT_PAGE_SIZE = 25;
 const AUTO_REFRESH_KEY = "dashboard_auto_refresh";
 const REFRESH_SECS_KEY = "dashboard_refresh_secs";
 const rowTone = (type: string) =>
@@ -61,7 +63,7 @@ function CacheReadMetric({ cached, input }: { cached: unknown; input: unknown })
             : "bg-bad-500/15 text-bad-300 ring-bad-500/25";
     return (
         <span
-            className={`inline-flex min-w-20 flex-col gap-0.5 rounded-md px-2 py-1 text-xs leading-tight ring-1 ring-inset ${tone}`}
+            className={`inline-flex min-w-0 items-center gap-1 rounded-md px-2 py-1 text-xs leading-tight whitespace-nowrap ring-1 ring-inset ${tone}`}
         >
             <span>{formatCompactNumber(cachedTokens)}</span>
             <span className="text-[11px] font-medium">({percentage.toFixed(1)}%)</span>
@@ -70,6 +72,37 @@ function CacheReadMetric({ cached, input }: { cached: unknown; input: unknown })
 }
 
 export default function EventsPage() {
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+    const queryString = searchParams.toString();
+    const query = useMemo(() => {
+        const params = new URLSearchParams(queryString);
+        const defaultRange = initialRange();
+        const pageSizeValue = Number(params.get("pageSize"));
+        const pageValue = Number(params.get("page"));
+        const pageSize = PAGE_SIZE_OPTIONS.includes(
+            pageSizeValue as (typeof PAGE_SIZE_OPTIONS)[number],
+        )
+            ? pageSizeValue
+            : DEFAULT_PAGE_SIZE;
+        const page = Number.isInteger(pageValue) && pageValue > 0 ? pageValue : 1;
+        const rangeLabel = params.get("range");
+        return {
+            pageSize,
+            offset: (page - 1) * pageSize,
+            eventType: params.get("event") ?? "",
+            model: params.get("model") ?? "",
+            userId: params.get("user") || null,
+            range: {
+                start:
+                    params.get("start") ||
+                    (rangeLabel === "All time" ? undefined : defaultRange.start),
+                end: params.get("end") || defaultRange.end,
+                label: rangeLabel || defaultRange.label,
+            } satisfies TimeRange,
+        };
+    }, [queryString]);
     const [range, setRange] = useState<TimeRange>(initialRange);
     const [users, setUsers] = useState<UserLookup[]>([]);
     const [models, setModels] = useState<string[]>([]);
@@ -78,7 +111,9 @@ export default function EventsPage() {
     const [model, setModel] = useState("");
     const [events, setEvents] = useState<ProxyEvent[]>([]);
     const [total, setTotal] = useState(0);
+    const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
     const [offset, setOffset] = useState(0);
+    const [queryHydrated, setQueryHydrated] = useState(false);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [autoRefresh, setAutoRefresh] = useState(false);
@@ -91,7 +126,7 @@ export default function EventsPage() {
             setError(null);
             return api
                 .events(
-                    PAGE_SIZE,
+                    pageSize,
                     pageOffset,
                     selectedEventType || undefined,
                     userId || undefined,
@@ -107,17 +142,32 @@ export default function EventsPage() {
                 .catch((e) => setError(e instanceof Error ? e.message : "Unable to load events."))
                 .finally(() => setLoading(false));
         },
-        [eventType, model, offset, range.end, range.start, userId],
+        [eventType, model, offset, pageSize, range.end, range.start, userId],
+    );
+    const updateUrl = useCallback(
+        (updates: Record<string, string | null | undefined>) => {
+            const params = new URLSearchParams(queryString);
+            Object.entries(updates).forEach(([key, value]) => {
+                if (value === null || value === undefined || value === "") params.delete(key);
+                else params.set(key, value);
+            });
+            const nextQueryString = params.toString();
+            router.replace(nextQueryString ? `${pathname}?${nextQueryString}` : pathname, {
+                scroll: false,
+            });
+        },
+        [pathname, queryString, router],
     );
     const refreshEvents = useCallback(async () => {
         setRefreshing(true);
         try {
             await load(0);
             setOffset(0);
+            updateUrl({ page: "1" });
         } finally {
             setRefreshing(false);
         }
-    }, [load]);
+    }, [load, updateUrl]);
     useEffect(() => {
         api.analyticsUsers()
             .then(setUsers)
@@ -127,8 +177,24 @@ export default function EventsPage() {
             .catch(() => {});
     }, []);
     useEffect(() => {
+        setRange(query.range);
+        setUserId(query.userId);
+        setEventType(query.eventType);
+        setModel(query.model);
+        setPageSize(query.pageSize);
+        setOffset(query.offset);
+        setQueryHydrated(true);
+    }, [query]);
+    useEffect(() => {
+        if (!queryHydrated) return;
         load(offset);
-    }, [load, offset]);
+    }, [load, offset, queryHydrated]);
+    useEffect(() => {
+        if (!queryHydrated || total <= 0 || offset < total) return;
+        const lastPageOffset = Math.max(0, (Math.ceil(total / pageSize) - 1) * pageSize);
+        setOffset(lastPageOffset);
+        updateUrl({ page: String(Math.floor(lastPageOffset / pageSize) + 1) });
+    }, [offset, pageSize, queryHydrated, total, updateUrl]);
     useEffect(() => {
         try {
             if (window.localStorage.getItem(AUTO_REFRESH_KEY) === "1") setAutoRefresh(true);
@@ -208,6 +274,12 @@ export default function EventsPage() {
                         onChange={(next) => {
                             setRange(next);
                             setOffset(0);
+                            updateUrl({
+                                start: next.start,
+                                end: next.end,
+                                range: next.label,
+                                page: "1",
+                            });
                         }}
                     />
                     <UserFilter
@@ -216,16 +288,29 @@ export default function EventsPage() {
                         onChange={(next) => {
                             setUserId(next);
                             setOffset(0);
+                            updateUrl({ user: next, page: "1" });
                         }}
                     />
                 </div>
             </header>
             <div className="border-ink-700 bg-ink-900 flex flex-wrap items-end gap-3 rounded-xl border p-3">
-                <EventTypeFilter value={eventType} options={EVENT_TYPES} onChange={setEventType} />
+                <EventTypeFilter
+                    value={eventType}
+                    options={EVENT_TYPES}
+                    onChange={(next) => {
+                        setEventType(next);
+                        setOffset(0);
+                        updateUrl({ event: next, page: "1" });
+                    }}
+                />
                 <EventTypeFilter
                     value={model}
                     options={models}
-                    onChange={setModel}
+                    onChange={(next) => {
+                        setModel(next);
+                        setOffset(0);
+                        updateUrl({ model: next, page: "1" });
+                    }}
                     label="Model"
                     allLabel="All models"
                     idPrefix="event-model-options"
@@ -233,7 +318,16 @@ export default function EventsPage() {
                 <button
                     onClick={() => {
                         setOffset(0);
-                        load(0);
+                        updateUrl({
+                            event: eventType,
+                            model,
+                            user: userId,
+                            start: range.start,
+                            end: range.end,
+                            range: range.label,
+                            page: "1",
+                            pageSize: String(pageSize),
+                        });
                     }}
                     className="bg-brand-500 text-ink-950 rounded-lg px-3 py-2 text-sm font-semibold"
                 >
@@ -354,21 +448,90 @@ export default function EventsPage() {
                     </div>
                 )}
             </section>
-            {total > PAGE_SIZE ? (
-                <div className="flex items-center justify-end gap-3">
+            {total > 0 ? (
+                <div className="flex flex-wrap items-center justify-end gap-3">
+                    <label className="text-fog-400 flex items-center gap-2 text-xs">
+                        <span>Rows</span>
+                        <select
+                            value={String(pageSize)}
+                            onChange={(event) => {
+                                const next = Number(event.target.value);
+                                if (
+                                    !PAGE_SIZE_OPTIONS.includes(
+                                        next as (typeof PAGE_SIZE_OPTIONS)[number],
+                                    )
+                                )
+                                    return;
+                                setPageSize(next);
+                                setOffset(0);
+                                updateUrl({ pageSize: String(next), page: "1" });
+                            }}
+                            className="border-ink-700 bg-ink-900 text-fog-100 rounded-lg border px-2 py-2 text-sm"
+                            aria-label="Rows per page"
+                        >
+                            {PAGE_SIZE_OPTIONS.map((option) => (
+                                <option key={option} value={option}>
+                                    {option}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
                     <button
                         disabled={offset === 0 || loading}
-                        onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                        onClick={() => {
+                            const nextOffset = Math.max(0, offset - pageSize);
+                            setOffset(nextOffset);
+                            updateUrl({ page: String(Math.floor(nextOffset / pageSize) + 1) });
+                        }}
                         className="border-ink-700 bg-ink-900 text-fog-200 rounded-lg border px-3 py-2 text-sm disabled:opacity-40"
                     >
                         Previous
                     </button>
                     <span className="text-fog-400 text-xs">
-                        Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.ceil(total / PAGE_SIZE)}
+                        Page {Math.floor(offset / pageSize) + 1} of{" "}
+                        {Math.max(1, Math.ceil(total / pageSize))}
                     </span>
+                    <form
+                        className="text-fog-400 flex items-center gap-2 text-xs"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            const field = event.currentTarget.elements.namedItem(
+                                "page",
+                            ) as HTMLInputElement;
+                            const nextPage = Math.min(
+                                Math.max(1, Number(field.value) || 1),
+                                Math.max(1, Math.ceil(total / pageSize)),
+                            );
+                            const nextOffset = (nextPage - 1) * pageSize;
+                            setOffset(nextOffset);
+                            updateUrl({ page: String(nextPage) });
+                        }}
+                    >
+                        <span>Go to</span>
+                        <input
+                            name="page"
+                            type="number"
+                            min={1}
+                            max={Math.max(1, Math.ceil(total / pageSize))}
+                            defaultValue={Math.floor(offset / pageSize) + 1}
+                            key={`${pageSize}-${offset}`}
+                            className="border-ink-700 bg-ink-900 text-fog-100 w-16 rounded-lg border px-2 py-2 text-center text-sm"
+                            aria-label="Jump to page"
+                        />
+                        <button
+                            type="submit"
+                            className="border-ink-700 bg-ink-900 text-fog-200 hover:bg-ink-800 rounded-lg border px-3 py-2 text-sm"
+                        >
+                            Go
+                        </button>
+                    </form>
                     <button
-                        disabled={offset + PAGE_SIZE >= total || loading}
-                        onClick={() => setOffset(offset + PAGE_SIZE)}
+                        disabled={offset + pageSize >= total || loading}
+                        onClick={() => {
+                            const nextOffset = offset + pageSize;
+                            setOffset(nextOffset);
+                            updateUrl({ page: String(Math.floor(nextOffset / pageSize) + 1) });
+                        }}
                         className="border-ink-700 bg-ink-900 text-fog-200 rounded-lg border px-3 py-2 text-sm disabled:opacity-40"
                     >
                         Next
