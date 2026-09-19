@@ -201,18 +201,8 @@ def sync_canonical_schema() -> None:
         # The old candidate-selection event names were replaced by names that
         # describe the response timing. Reconcile historical rows here so the
         # data migration remains part of the canonical single-revision flow.
-        connection.execute(
-            text(
-                "UPDATE proxy_events SET event_type = 'account.response_received' "
-                "WHERE event_type = 'account.selected'"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE proxy_events SET event_type = 'fallback.response_received' "
-                "WHERE event_type = 'fallback.selected'"
-            )
-        )
+        connection.execute(text("UPDATE proxy_events SET event_type = 'account.response_received' WHERE event_type = 'account.selected'"))
+        connection.execute(text("UPDATE proxy_events SET event_type = 'fallback.response_received' WHERE event_type = 'fallback.selected'"))
 
 
 def main() -> None:

@@ -344,10 +344,7 @@ def _is_provider_error_frame(frame: bytes) -> bool:
     return (has_error and not has_output) or any(phrase in lowered for phrase in _CAPACITY_PHRASES)
 
 
-_SYNTHETIC_COMPLETION = (
-    b"event: response.completed\n"
-    b'data: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'
-)
+_SYNTHETIC_COMPLETION = b'event: response.completed\ndata: {"type":"response.completed","response":{"status":"completed","output":[]}}\n\n'
 
 
 def _sanitize_sse_payload(raw: bytes) -> bytes:
@@ -355,7 +352,7 @@ def _sanitize_sse_payload(raw: bytes) -> bytes:
     output = bytearray()
     remaining = raw
     while remaining:
-        match = re.search(br"\r?\n\r?\n", remaining)
+        match = re.search(rb"\r?\n\r?\n", remaining)
         if match is None:
             if not _is_provider_error_frame(remaining):
                 output.extend(remaining)
@@ -376,7 +373,7 @@ async def _iter_sanitized_sse(response: httpx.Response):
     async for chunk in response.aiter_bytes():
         buffer.extend(chunk)
         while True:
-            match = re.search(br"\r?\n\r?\n", buffer)
+            match = re.search(rb"\r?\n\r?\n", buffer)
             if match is None:
                 break
             end = match.end()
@@ -1262,10 +1259,15 @@ async def proxy_responses(
             # for a bounded period and re-read the database before giving up;
             # this prevents a short pool dip from becoming a client 503.
             now_monotonic = asyncio.get_running_loop().time()
-            recoverable = db.query(AccountDb).filter(
-                AccountDb.status != AccountStatus.DISABLED,
-                AccountDb.provider_health != ProviderHealth.REAUTH_REQUIRED,
-            ).count() > 0
+            recoverable = (
+                db.query(AccountDb)
+                .filter(
+                    AccountDb.status != AccountStatus.DISABLED,
+                    AccountDb.provider_health != ProviderHealth.REAUTH_REQUIRED,
+                )
+                .count()
+                > 0
+            )
             if not recoverable or now_monotonic >= pool_wait_deadline:
                 break
             await asyncio.sleep(min(settings.POOL_WAIT_POLL_INTERVAL_SECONDS, pool_wait_deadline - now_monotonic))
