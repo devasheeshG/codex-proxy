@@ -66,6 +66,9 @@ def test_recent_traffic_or_warmup_means_account_is_already_warm(seed_account):
         account.five_hour_reset_at = now + timedelta(hours=4)
         # A provider reset timestamp alone is not evidence of warm-up.
         assert warmup.is_cold(account, now) is True
+        account.warmup_next_at = now + timedelta(hours=4)
+        assert warmup.is_cold(account, now) is False
+        account.warmup_next_at = None
         account.last_used_at = now - timedelta(minutes=1)
         assert warmup.is_cold(account, now) is False
 
