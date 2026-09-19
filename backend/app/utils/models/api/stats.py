@@ -58,6 +58,10 @@ class UsageRecord(BaseModel):
     cost_usd: float  # API-equivalent cost of this request (what it would cost on the pay-as-you-go API).
     status_code: Optional[int]
     created_at: datetime
+    codex_session_id: Optional[str] = None
+    codex_thread_id: Optional[str] = None
+    codex_turn_id: Optional[str] = None
+    codex_root_turn_id: Optional[str] = None
 
     @classmethod
     def from_db(
@@ -89,6 +93,10 @@ class UsageRecord(BaseModel):
             request_mode=record_db.request_mode,
             cost_usd=(float(record_db.billed_cost_usd) if record_db.billed_cost_usd is not None else pricing.cost_for_record(record_db)),
             status_code=record_db.status_code,
+            codex_session_id=record_db.codex_session_id,
+            codex_thread_id=record_db.codex_thread_id,
+            codex_turn_id=record_db.codex_turn_id,
+            codex_root_turn_id=record_db.codex_root_turn_id,
             created_at=record_db.created_at,
         )
 

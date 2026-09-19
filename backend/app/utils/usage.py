@@ -250,6 +250,10 @@ def record_usage(
     status_code: Optional[int],
     request_id: Optional[str],
     fallback_provider_id: Optional[uuid.UUID] = None,
+    codex_session_id: Optional[str] = None,
+    codex_thread_id: Optional[str] = None,
+    codex_turn_id: Optional[str] = None,
+    codex_root_turn_id: Optional[str] = None,
 ) -> None:
     from app import pricing
 
@@ -280,6 +284,10 @@ def record_usage(
             request_mode=usage.request_mode,
             status_code=status_code,
             request_id=request_id,
+            codex_session_id=codex_session_id,
+            codex_thread_id=codex_thread_id,
+            codex_turn_id=codex_turn_id,
+            codex_root_turn_id=codex_root_turn_id,
             billed_cost_usd=billed_cost,
             created_at=now,
         )

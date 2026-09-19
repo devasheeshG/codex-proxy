@@ -84,6 +84,10 @@ export interface UsageRecord {
     cost_usd: number;
     status_code: number | null;
     created_at: string;
+    codex_session_id?: string | null;
+    codex_thread_id?: string | null;
+    codex_turn_id?: string | null;
+    codex_root_turn_id?: string | null;
 }
 
 export interface UsagePage {
@@ -97,6 +101,10 @@ export interface ProxyEvent {
     id: string;
     created_at: string;
     request_id: string;
+    codex_session_id?: string | null;
+    codex_thread_id?: string | null;
+    codex_turn_id?: string | null;
+    codex_root_turn_id?: string | null;
     user_id: string | null;
     api_key_id: string | null;
     account_id: string | null;

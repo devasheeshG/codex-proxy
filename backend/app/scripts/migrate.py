@@ -12,8 +12,11 @@ from app.utils.postgres import OpenAIFallbackDb, ProxyEventDb
 from app.utils.postgres.base import engine, init_database
 
 CANONICAL_REVISION = "001"
-LEGACY_EQUIVALENT_HEADS = frozenset({"0009", "002", "003", "004", "005", "006"})
-KNOWN_CHAIN_REVISIONS = frozenset({"001", "007", "008", "009", "010", "011"})
+# These revisions existed before the migration squash. Keeping their IDs here
+# lets an existing installation normalize safely before Alembic loads the new
+# single-file history. They are never recreated or replayed.
+LEGACY_EQUIVALENT_HEADS = frozenset({"0009", "002", "003", "004", "005", "006", "007", "008", "009", "010", "011", "012", "013"})
+KNOWN_CHAIN_REVISIONS = frozenset({"001"})
 
 
 def normalize_legacy_head() -> None:
@@ -194,6 +197,22 @@ def sync_canonical_schema() -> None:
                     """
                 )
             )
+
+        # The old candidate-selection event names were replaced by names that
+        # describe the response timing. Reconcile historical rows here so the
+        # data migration remains part of the canonical single-revision flow.
+        connection.execute(
+            text(
+                "UPDATE proxy_events SET event_type = 'account.response_received' "
+                "WHERE event_type = 'account.selected'"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE proxy_events SET event_type = 'fallback.response_received' "
+                "WHERE event_type = 'fallback.selected'"
+            )
+        )
 
 
 def main() -> None:

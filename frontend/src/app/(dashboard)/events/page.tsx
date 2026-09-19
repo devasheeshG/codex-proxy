@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import { ProxyEvent, TimeRange, UserLookup } from "@/lib/types";
@@ -7,21 +7,30 @@ import { RangePicker } from "@/components/RangePicker";
 import { UserFilter } from "@/components/UserFilter";
 import { EventTypeFilter } from "@/components/EventTypeFilter";
 import { RequestCaptureOverlay } from "@/components/RequestCaptureOverlay";
-import { Button, Pagination, StatusToggle, TextInput } from "@/components/ui";
+import { Button, Pagination, SelectMenu, StatusToggle, TextInput } from "@/components/ui";
 import { formatCompactNumber, formatDateTime } from "@/lib/format";
 
 const EVENT_TYPES = [
     "request.received",
+    "request.exhausted",
     "account.attempt",
+    "account.busy",
     "account.capacity",
     "account.cooldown",
+    "account.error",
     "account.rate_limited",
-    "account.selected",
+    "account.response_received",
+    "account.transient_error",
     "fallback.attempt",
+    "fallback.busy",
     "fallback.capacity",
+    "fallback.error",
+    "fallback.response_received",
+    "fallback.transient_error",
     "response.returned",
-    "request.exhausted",
 ];
+const GROUP_BY_OPTIONS = ["agent_run", "conversation", "session"] as const;
+type GroupBy = "request" | (typeof GROUP_BY_OPTIONS)[number];
 const initialRange = (): TimeRange => {
     const now = new Date();
     return {
@@ -39,7 +48,7 @@ const rowTone = (type: string) =>
         ? "bg-bad-500/10 hover:bg-bad-500/15"
         : type.includes("cooldown") || type.includes("rate_limited")
           ? "bg-warn-500/10 hover:bg-warn-500/15"
-          : type.includes("selected") || type.includes("returned")
+          : type.includes("response_received") || type.includes("returned")
             ? "bg-good-500/10 hover:bg-good-500/15"
             : "hover:bg-brand-500/5";
 
@@ -47,6 +56,26 @@ function displayModel(metadata: Record<string, unknown>): string {
     const effective = String(metadata.model ?? "—");
     const requested = typeof metadata.requested_model === "string" ? metadata.requested_model : "";
     return requested && requested !== effective ? `${effective} (${requested})` : effective;
+}
+
+function groupByLabel(groupBy: GroupBy): string {
+    if (groupBy === "agent_run") return "Agent run";
+    if (groupBy === "conversation") return "Conversation";
+    if (groupBy === "session") return "Codex session";
+    return "Individual requests";
+}
+
+function groupValue(event: ProxyEvent, groupBy: GroupBy): string {
+    if (groupBy === "request") return event.request_id;
+    const metadata = event.metadata as Record<string, unknown>;
+    const field =
+        groupBy === "agent_run"
+            ? "codex_root_turn_id"
+            : groupBy === "conversation"
+              ? "codex_thread_id"
+              : "codex_session_id";
+    const value = (event as unknown as Record<string, unknown>)[field] ?? metadata[field];
+    return typeof value === "string" && value.trim() ? value : `missing:${event.request_id}`;
 }
 
 function CacheReadMetric({ cached, input }: { cached: unknown; input: unknown }) {
@@ -87,10 +116,17 @@ export default function EventsPage() {
             ? pageSizeValue
             : DEFAULT_PAGE_SIZE;
         const page = Number.isInteger(pageValue) && pageValue > 0 ? pageValue : 1;
+        const rawGroupBy = params.get("groupBy");
+        const groupBy: GroupBy = GROUP_BY_OPTIONS.includes(
+            rawGroupBy as (typeof GROUP_BY_OPTIONS)[number],
+        )
+            ? (rawGroupBy as GroupBy)
+            : "request";
         const rangeLabel = params.get("range");
         return {
             pageSize,
             offset: (page - 1) * pageSize,
+            groupBy,
             eventType: params.get("event") ?? "",
             model: params.get("model") ?? "",
             userId: params.get("user") || null,
@@ -109,6 +145,7 @@ export default function EventsPage() {
     const [userId, setUserId] = useState<string | null>(null);
     const [eventType, setEventType] = useState("");
     const [model, setModel] = useState("");
+    const [groupBy, setGroupBy] = useState<GroupBy>("request");
     const [events, setEvents] = useState<ProxyEvent[]>([]);
     const [total, setTotal] = useState(0);
     const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -181,6 +218,7 @@ export default function EventsPage() {
         setUserId(query.userId);
         setEventType(query.eventType);
         setModel(query.model);
+        setGroupBy(query.groupBy);
         setPageSize(query.pageSize);
         setOffset(query.offset);
         setQueryHydrated(true);
@@ -315,6 +353,29 @@ export default function EventsPage() {
                     allLabel="All models"
                     idPrefix="event-model-options"
                 />
+                <div className="min-w-[220px]">
+                    <span className="text-fog-400 block text-xs">Group by</span>
+                    <SelectMenu
+                        value={groupBy}
+                        options={[
+                            { value: "request", label: "Individual requests" },
+                            { value: "agent_run", label: "Agent run" },
+                            { value: "conversation", label: "Conversation" },
+                            { value: "session", label: "Codex session" },
+                        ]}
+                        onChange={(next) => {
+                            const nextGroupBy = next as GroupBy;
+                            setGroupBy(nextGroupBy);
+                            setOffset(0);
+                            updateUrl({
+                                groupBy: nextGroupBy === "request" ? null : nextGroupBy,
+                                page: "1",
+                            });
+                        }}
+                        ariaLabel="Group events by"
+                        className="mt-1"
+                    />
+                </div>
                 <button
                     onClick={() => {
                         setOffset(0);
@@ -370,79 +431,127 @@ export default function EventsPage() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {events.map((e) => {
-                                    const m = e.metadata as Record<string, unknown>;
-                                    return (
-                                        <tr
-                                            key={e.id}
-                                            className={`border-ink-800 border-b align-top ${rowTone(e.event_type)}`}
-                                        >
-                                            <td className="text-fog-400 w-44 min-w-44 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                {formatDateTime(e.created_at)}
-                                            </td>
-                                            <td className="text-fog-300 w-32 min-w-32 px-3 py-3 text-xs whitespace-nowrap">
-                                                {users.find((u) => u.id === e.user_id)?.name ?? "—"}
-                                            </td>
-                                            <td className="text-fog-300 w-48 min-w-48 px-3 py-3 text-xs break-words whitespace-normal">
-                                                {displayModel(m)}
-                                            </td>
-                                            <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
-                                                {String(
-                                                    m.thinking_level ?? m.reasoning_level ?? "—",
-                                                )}
-                                            </td>
-                                            <td className="text-fog-400 w-80 max-w-80 min-w-80 px-3 py-3 font-mono text-xs whitespace-normal">
-                                                <span className="block [overflow-wrap:anywhere] break-words">
-                                                    {String(m.account_name ?? "—")}
-                                                </span>
-                                            </td>
-                                            <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">
-                                                <div className="flex flex-wrap items-center gap-2">
-                                                    <span>{e.event_type}</span>
-                                                    {(e.event_type === "request.received" ||
-                                                        e.event_type === "response.returned") &&
-                                                    e.archive_hot !== false &&
-                                                    e.request_id?.startsWith("req_") ? (
-                                                        <button
-                                                            type="button"
-                                                            onClick={() =>
-                                                                setCaptureEventId(
-                                                                    e.request_id.slice(4),
-                                                                )
+                                {(() => {
+                                    const groups = new Map<string, ProxyEvent[]>();
+                                    events.forEach((event) => {
+                                        const key = groupValue(event, groupBy);
+                                        const existing = groups.get(key);
+                                        if (existing) existing.push(event);
+                                        else groups.set(key, [event]);
+                                    });
+                                    const rows: ReactNode[] = [];
+                                    groups.forEach((groupEvents, key) => {
+                                        if (groupBy !== "request") {
+                                            const missing = key.startsWith("missing:");
+                                            rows.push(
+                                                <tr
+                                                    key={`group-${key}`}
+                                                    className="bg-ink-850 border-ink-700 border-b"
+                                                >
+                                                    <td colSpan={12} className="px-3 py-2 text-xs">
+                                                        <span className="text-fog-200 font-medium">
+                                                            {groupByLabel(groupBy)}
+                                                        </span>
+                                                        <span className="text-fog-500 mx-2">·</span>
+                                                        <span
+                                                            className={
+                                                                missing
+                                                                    ? "text-fog-500"
+                                                                    : "text-brand-300 font-mono"
                                                             }
-                                                            className="text-fog-300 hover:text-brand-200 rounded border border-current/30 px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
                                                         >
-                                                            View capture
-                                                        </button>
-                                                    ) : null}
-                                                </div>
-                                            </td>
-                                            <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                {formatCompactNumber(m.input_tokens)}
-                                            </td>
-                                            <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                {formatCompactNumber(m.output_tokens)}
-                                            </td>
-                                            <td className="w-32 min-w-32 px-3 py-3 font-mono text-xs">
-                                                <CacheReadMetric
-                                                    cached={m.cached_input_tokens}
-                                                    input={m.input_tokens}
-                                                />
-                                            </td>
-                                            <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                {formatCompactNumber(m.cache_write_tokens)}
-                                            </td>
-                                            <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                {m.cost_usd == null
-                                                    ? "—"
-                                                    : `$${Number(m.cost_usd).toFixed(4)}`}
-                                            </td>
-                                            <td className="text-fog-300 w-24 min-w-24 px-3 py-3 whitespace-nowrap">
-                                                {e.status_code ?? "—"}
-                                            </td>
-                                        </tr>
-                                    );
-                                })}
+                                                            {missing
+                                                                ? "No identifier in this event"
+                                                                : key}
+                                                        </span>
+                                                        <span className="text-fog-500 ml-2">
+                                                            · {groupEvents.length} events on this
+                                                            page
+                                                        </span>
+                                                    </td>
+                                                </tr>,
+                                            );
+                                        }
+                                        groupEvents.forEach((e) => {
+                                            const m = e.metadata as Record<string, unknown>;
+                                            rows.push(
+                                                <tr
+                                                    key={e.id}
+                                                    className={`border-ink-800 border-b align-top ${rowTone(e.event_type)}`}
+                                                >
+                                                    <td className="text-fog-400 w-44 min-w-44 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                        {formatDateTime(e.created_at)}
+                                                    </td>
+                                                    <td className="text-fog-300 w-32 min-w-32 px-3 py-3 text-xs whitespace-nowrap">
+                                                        {users.find((u) => u.id === e.user_id)
+                                                            ?.name ?? "—"}
+                                                    </td>
+                                                    <td className="text-fog-300 w-48 min-w-48 px-3 py-3 text-xs break-words whitespace-normal">
+                                                        {displayModel(m)}
+                                                    </td>
+                                                    <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
+                                                        {String(
+                                                            m.thinking_level ??
+                                                                m.reasoning_level ??
+                                                                "—",
+                                                        )}
+                                                    </td>
+                                                    <td className="text-fog-400 w-80 max-w-80 min-w-80 px-3 py-3 font-mono text-xs whitespace-normal">
+                                                        <span className="block [overflow-wrap:anywhere] break-words">
+                                                            {String(m.account_name ?? "—")}
+                                                        </span>
+                                                    </td>
+                                                    <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <span>{e.event_type}</span>
+                                                            {(e.event_type === "request.received" ||
+                                                                e.event_type ===
+                                                                    "response.returned") &&
+                                                            e.archive_hot !== false &&
+                                                            e.request_id?.startsWith("req_") ? (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() =>
+                                                                        setCaptureEventId(
+                                                                            e.request_id.slice(4),
+                                                                        )
+                                                                    }
+                                                                    className="text-fog-300 hover:text-brand-200 rounded border border-current/30 px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
+                                                                >
+                                                                    View capture
+                                                                </button>
+                                                            ) : null}
+                                                        </div>
+                                                    </td>
+                                                    <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                        {formatCompactNumber(m.input_tokens)}
+                                                    </td>
+                                                    <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                        {formatCompactNumber(m.output_tokens)}
+                                                    </td>
+                                                    <td className="w-32 min-w-32 px-3 py-3 font-mono text-xs">
+                                                        <CacheReadMetric
+                                                            cached={m.cached_input_tokens}
+                                                            input={m.input_tokens}
+                                                        />
+                                                    </td>
+                                                    <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                        {formatCompactNumber(m.cache_write_tokens)}
+                                                    </td>
+                                                    <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                        {m.cost_usd == null
+                                                            ? "—"
+                                                            : `$${Number(m.cost_usd).toFixed(4)}`}
+                                                    </td>
+                                                    <td className="text-fog-300 w-24 min-w-24 px-3 py-3 whitespace-nowrap">
+                                                        {e.status_code ?? "—"}
+                                                    </td>
+                                                </tr>,
+                                            );
+                                        });
+                                    });
+                                    return rows;
+                                })()}
                             </tbody>
                         </table>
                     </div>

@@ -11,6 +11,10 @@ class ProxyEvent(BaseModel):
     id: UUID
     created_at: datetime
     request_id: str
+    codex_session_id: Optional[str] = None
+    codex_thread_id: Optional[str] = None
+    codex_turn_id: Optional[str] = None
+    codex_root_turn_id: Optional[str] = None
     user_id: Optional[UUID] = None
     api_key_id: Optional[UUID] = None
     account_id: Optional[UUID] = None

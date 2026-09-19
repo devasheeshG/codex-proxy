@@ -215,6 +215,12 @@ def upgrade() -> None:
         sa.Column("request_mode", sa.VARCHAR(), nullable=False, server_default="standard"),
         sa.Column("status_code", sa.Integer(), nullable=True),
         sa.Column("request_id", sa.VARCHAR(), nullable=True),
+        # Native Codex identifiers are optional because non-Codex clients and
+        # legacy records do not provide them.
+        sa.Column("codex_session_id", sa.VARCHAR(length=128), nullable=True),
+        sa.Column("codex_thread_id", sa.VARCHAR(length=128), nullable=True),
+        sa.Column("codex_turn_id", sa.VARCHAR(length=128), nullable=True),
+        sa.Column("codex_root_turn_id", sa.VARCHAR(length=128), nullable=True),
         sa.Column("billed_cost_usd", sa.Float(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id", name="pk_usage_records_id"),
@@ -233,12 +239,19 @@ def upgrade() -> None:
     op.create_index("ix_usage_records_account_id", "usage_records", ["account_id"])
     op.create_index("ix_usage_records_fallback_provider_id", "usage_records", ["fallback_provider_id"])
     op.create_index("ix_usage_records_created_at", "usage_records", ["created_at"])
+    op.create_index("ix_usage_records_codex_session_id", "usage_records", ["codex_session_id"])
+    op.create_index("ix_usage_records_codex_thread_id", "usage_records", ["codex_thread_id"])
+    op.create_index("ix_usage_records_codex_root_turn_id", "usage_records", ["codex_root_turn_id"])
 
     op.create_table(
         "proxy_events",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("request_id", sa.String(length=128), nullable=False),
+        sa.Column("codex_session_id", sa.VARCHAR(length=128), nullable=True),
+        sa.Column("codex_thread_id", sa.VARCHAR(length=128), nullable=True),
+        sa.Column("codex_turn_id", sa.VARCHAR(length=128), nullable=True),
+        sa.Column("codex_root_turn_id", sa.VARCHAR(length=128), nullable=True),
         sa.Column("user_id", sa.UUID(), nullable=True),
         sa.Column("api_key_id", sa.UUID(), nullable=True),
         sa.Column("account_id", sa.UUID(), nullable=True),
@@ -252,6 +265,9 @@ def upgrade() -> None:
     op.create_index("ix_proxy_events_created_at", "proxy_events", ["created_at"])
     op.create_index("ix_proxy_events_request_id", "proxy_events", ["request_id"])
     op.create_index("ix_proxy_events_user_id", "proxy_events", ["user_id"])
+    op.create_index("ix_proxy_events_codex_session_id", "proxy_events", ["codex_session_id"])
+    op.create_index("ix_proxy_events_codex_thread_id", "proxy_events", ["codex_thread_id"])
+    op.create_index("ix_proxy_events_codex_root_turn_id", "proxy_events", ["codex_root_turn_id"])
 
     _create_notification_tables()
 

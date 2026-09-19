@@ -210,6 +210,12 @@ class ProxyEventDb(DatabaseBase):
     id = Column(UUID(as_uuid=True), nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     request_id = Column(VARCHAR(128), nullable=False)
+    # Native Codex correlation identifiers copied from client_metadata. These
+    # are nullable for historical events and non-Codex clients.
+    codex_session_id = Column(VARCHAR(128), nullable=True)
+    codex_thread_id = Column(VARCHAR(128), nullable=True)
+    codex_turn_id = Column(VARCHAR(128), nullable=True)
+    codex_root_turn_id = Column(VARCHAR(128), nullable=True)
     user_id = Column(UUID(as_uuid=True), nullable=True)
     api_key_id = Column(UUID(as_uuid=True), nullable=True)
     account_id = Column(UUID(as_uuid=True), nullable=True)
@@ -223,6 +229,9 @@ class ProxyEventDb(DatabaseBase):
         PrimaryKeyConstraint("id", name="pk_proxy_events_id"),
         Index("ix_proxy_events_created_at", "created_at"),
         Index("ix_proxy_events_request_id", "request_id"),
+        Index("ix_proxy_events_codex_session_id", "codex_session_id"),
+        Index("ix_proxy_events_codex_thread_id", "codex_thread_id"),
+        Index("ix_proxy_events_codex_root_turn_id", "codex_root_turn_id"),
         Index("ix_proxy_events_user_id", "user_id"),
     )
 
@@ -312,6 +321,10 @@ class UsageRecordDb(DatabaseBase):
     request_mode = Column(VARCHAR, nullable=False, default="standard", server_default="standard")
     status_code = Column(Integer, nullable=True)
     request_id = Column(VARCHAR, nullable=True)
+    codex_session_id = Column(VARCHAR(128), nullable=True)
+    codex_thread_id = Column(VARCHAR(128), nullable=True)
+    codex_turn_id = Column(VARCHAR(128), nullable=True)
+    codex_root_turn_id = Column(VARCHAR(128), nullable=True)
     billed_cost_usd = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
@@ -328,6 +341,9 @@ class UsageRecordDb(DatabaseBase):
         ),
         Index("ix_usage_records_user_id", "user_id"),
         Index("ix_usage_records_api_key_id", "api_key_id"),
+        Index("ix_usage_records_codex_session_id", "codex_session_id"),
+        Index("ix_usage_records_codex_thread_id", "codex_thread_id"),
+        Index("ix_usage_records_codex_root_turn_id", "codex_root_turn_id"),
         Index("ix_usage_records_account_id", "account_id"),
         Index("ix_usage_records_fallback_provider_id", "fallback_provider_id"),
         Index("ix_usage_records_created_at", "created_at"),

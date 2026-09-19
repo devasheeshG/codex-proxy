@@ -543,9 +543,14 @@ def _emit_event(
     if request_id:
         context = getattr(request.state, "proxy_event_context", {})
         merged_metadata = {**context, **(metadata or {})}
+        run_context = getattr(request.state, "codex_run_context", {})
         events.record_event(
             event_type,
             request_id,
+            codex_session_id=run_context.get("codex_session_id"),
+            codex_thread_id=run_context.get("codex_thread_id"),
+            codex_turn_id=run_context.get("codex_turn_id"),
+            codex_root_turn_id=run_context.get("codex_root_turn_id"),
             user_id=user_id,
             api_key_id=api_key_id,
             account_id=account_id,
@@ -579,6 +584,7 @@ def _record_usage_safe(
     status_code: Optional[int],
     request_id: Optional[str],
     fallback_provider_id: Optional[uuid.UUID] = None,
+    codex_run_context: Optional[Mapping[str, str]] = None,
 ) -> None:
     try:
         with get_db_cm() as db:
@@ -591,6 +597,10 @@ def _record_usage_safe(
                 status_code,
                 request_id,
                 fallback_provider_id,
+                (codex_run_context or {}).get("codex_session_id"),
+                (codex_run_context or {}).get("codex_thread_id"),
+                (codex_run_context or {}).get("codex_turn_id"),
+                (codex_run_context or {}).get("codex_root_turn_id"),
             )
     except Exception:  # noqa: BLE001
         logger.exception("Failed to record proxied token usage")
@@ -601,6 +611,47 @@ def _set_archive_metadata(request: Request, **fields: object) -> None:
     metadata = getattr(request.state, "archive_metadata", None)
     if isinstance(metadata, dict):
         metadata.update({key: value for key, value in fields.items() if value is not None})
+
+
+def _extract_codex_run_context(body: object) -> dict[str, str]:
+    """Extract native Codex correlation IDs without inspecting prompt content."""
+    if not isinstance(body, Mapping):
+        return {}
+    client_metadata = body.get("client_metadata")
+    if not isinstance(client_metadata, Mapping):
+        return {}
+
+    def clean(value: object) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        value = value.strip()
+        return value[:128] if value else None
+
+    result: dict[str, str] = {}
+    for source, target in (
+        ("session_id", "codex_session_id"),
+        ("thread_id", "codex_thread_id"),
+        ("turn_id", "codex_turn_id"),
+    ):
+        value = clean(client_metadata.get(source))
+        if value:
+            result[target] = value
+
+    turn_metadata = client_metadata.get("x-codex-turn-metadata")
+    if isinstance(turn_metadata, str):
+        try:
+            turn_metadata = json.loads(turn_metadata)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            turn_metadata = None
+    if isinstance(turn_metadata, Mapping):
+        root_turn_id = clean(turn_metadata.get("root_turn_id"))
+        if root_turn_id:
+            result["codex_root_turn_id"] = root_turn_id
+        for source, target in (("session_id", "codex_session_id"), ("thread_id", "codex_thread_id"), ("turn_id", "codex_turn_id")):
+            value = clean(turn_metadata.get(source))
+            if value and target not in result:
+                result[target] = value
+    return result
 
 
 def _archive_usage(request: Request, usage_obj: usage.Usage) -> None:
@@ -1083,6 +1134,7 @@ async def proxy_responses(
     convert_stream_to_response = False
     client_requested_stream = False
     chat_metadata: Optional[chat_completions.ChatRequestMetadata] = None
+    codex_run_context: dict[str, str] = {}
     try:
         parsed_request = json.loads(body)
         if is_chat_completion:
@@ -1099,6 +1151,7 @@ async def proxy_responses(
             client_requested_stream = chat_metadata.stream
             convert_stream_to_response = not chat_metadata.stream
         if isinstance(parsed_request, dict):
+            codex_run_context = _extract_codex_run_context(parsed_request)
             request_changed = is_chat_completion
             requested_model = parsed_request.get("model")
             request_model = _override_model(user, requested_model)
@@ -1175,7 +1228,9 @@ async def proxy_responses(
         "requested_model": requested_model,
         "thinking_level": request_reasoning,
         "user_priority": user.priority,
+        **codex_run_context,
     }
+    request.state.codex_run_context = codex_run_context
     request.state.proxy_model = request_model
     _emit_event(request, "request.received", user_id=user.id, api_key_id=key.id, metadata={"path": request.url.path, "method": request.method})
     _set_archive_metadata(
@@ -1406,7 +1461,14 @@ async def proxy_responses(
             background_tasks.add_task(warmup.warm_pool_if_needed)
         response = candidate
         chosen_id = account.id
-        _emit_event(request, "account.selected", user_id=user.id, api_key_id=key.id, account_id=account.id, status_code=candidate.status_code)
+        _emit_event(
+            request,
+            "account.response_received",
+            user_id=user.id,
+            api_key_id=key.id,
+            account_id=account.id,
+            status_code=candidate.status_code,
+        )
         break
 
     # Pay-as-you-go credentials are true fallbacks: they are considered only
@@ -1548,7 +1610,12 @@ async def proxy_responses(
         response = candidate
         chosen_fallback_id = fallback.id
         _emit_event(
-            request, "fallback.selected", user_id=user.id, api_key_id=key.id, fallback_provider_id=fallback.id, status_code=candidate.status_code
+            request,
+            "fallback.response_received",
+            user_id=user.id,
+            api_key_id=key.id,
+            fallback_provider_id=fallback.id,
+            status_code=candidate.status_code,
         )
         break
 
@@ -1607,6 +1674,7 @@ async def proxy_responses(
     # the provider's request ID here previously made model/token/cost enrichment
     # impossible because no event row carried that unrelated upstream value.
     request_id = request.state.proxy_event_request_id
+    run_context = getattr(request.state, "codex_run_context", {})
 
     if convert_stream_to_response and response_status < 400:
         raw = await response.aread()
@@ -1642,6 +1710,7 @@ async def proxy_responses(
             response_status,
             request_id,
             chosen_fallback_id,
+            run_context,
         )
         _archive_usage(request, parsed_usage)
         if terminal_response is None:
@@ -1710,6 +1779,7 @@ async def proxy_responses(
                     response_status,
                     request_id,
                     chosen_fallback_id,
+                    run_context,
                 )
                 _archive_usage(request, accumulator.result())
 
@@ -1760,6 +1830,7 @@ async def proxy_responses(
             response_status,
             request_id,
             chosen_fallback_id,
+            run_context,
         )
         _archive_usage(request, parsed_usage)
         return Response(
@@ -1798,6 +1869,7 @@ async def proxy_responses(
                 response_status,
                 request_id,
                 chosen_fallback_id,
+                run_context,
             )
             _archive_usage(request, captured_usage)
 

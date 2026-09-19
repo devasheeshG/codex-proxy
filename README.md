@@ -176,6 +176,40 @@ Successful and failed requests are both retained. When request archiving is
 enabled, an event can open the exact captured request and response body from
 S3-compatible storage; authorization and cookie headers are never archived.
 
+#### Event types and routing outcomes
+
+The event log is an operational timeline. One request can produce several
+events, while token usage and cost are recorded once per request and attached
+to related rows by `request_id`. Do not add the cost shown on multiple event
+rows together.
+
+| Event | When it occurs | Status | What happens next |
+| --- | --- | ---: | --- |
+| `request.received` | An authenticated request enters routing. | — | Account selection begins. |
+| `account.attempt` | A pooled subscription account is tried. | — | The request is sent upstream. |
+| `account.busy` | The account's concurrency lane is full. | — | The account is skipped and another is tried. |
+| `account.capacity` | The provider reports model capacity/unavailability before output. | Upstream | The account is temporarily cooled down and another is tried. |
+| `account.cooldown` | The proxy records the cooldown action. | — | The account is kept out of selection temporarily. |
+| `account.transient_error` | A retryable pre-output overload/server failure occurs. | Upstream | A short transient cooldown is applied; quota is not marked exhausted. |
+| `account.rate_limited` | The provider reports an account/workspace quota limit. | `429` | The provider reset/retry time is used before retrying the account. |
+| `account.error` | The request fails before a usable upstream response arrives. | — | The account is excluded for this request and routing continues. |
+| `account.response_received` | A pooled account has returned a response candidate. | Candidate | Account failover stops and the response is processed. |
+| `fallback.attempt` | A configured pay-as-you-go provider is tried after subscription accounts fail. | — | The fallback request is sent upstream. |
+| `fallback.busy` | A fallback provider reaches its concurrency ceiling. | — | Another fallback provider is tried, if available. |
+| `fallback.capacity` | A fallback provider reports model capacity/unavailability. | Upstream | The fallback is cooled down and another provider is tried. |
+| `fallback.transient_error` | A fallback emits a retryable pre-output error. | Upstream | A short circuit-breaker cooldown is applied. |
+| `fallback.error` | A fallback request fails before a response arrives. | — | The provider is marked degraded/cooling down. |
+| `fallback.response_received` | A fallback provider has returned a response candidate. | Candidate | Fallback routing stops and the response is processed. |
+| `response.returned` | The proxy has a final upstream response to return. | Final HTTP status | Usage is parsed and written to the usage ledger. |
+| `request.exhausted` | No eligible subscription account or fallback can serve the request. | `503` | The client receives 503; pool/elevated-503 notifications may be queued. |
+
+Operational rows can show the request's input/output/cache/cost values even
+when that particular event did not consume tokens. Those values come from the
+single usage record for the same request. A dash means no usage record or no
+reported value; zero means a usage record exists and the provider reported no
+tokens. Unknown models have no pricing entry and therefore have an estimated
+cost of zero.
+
 ### API fallbacks
 
 ![API fallback settings](docs/screenshots/fallbacks.png)
