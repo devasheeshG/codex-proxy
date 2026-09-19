@@ -84,8 +84,10 @@ def is_eligible(account: AccountDb, now: Optional[datetime] = None) -> bool:
 def is_cold(account: AccountDb, now: Optional[datetime] = None) -> bool:
     """Return whether the five-hour window has not started for this account."""
     now = now or datetime.now(timezone.utc)
-    if _future(account.five_hour_reset_at, now):
-        return False
+    # Provider usage probes often return the next reset timestamp even when an
+    # account has not made a request in the current window. That timestamp is
+    # not evidence that this proxy has warmed the account, so use observed
+    # traffic/warm-up activity as the source of truth instead.
     recent_activity = [_as_utc(account.last_used_at)]
     if account.warmup_last_status == "success":
         recent_activity.append(_as_utc(account.warmup_last_at))
@@ -98,6 +100,21 @@ def pool_usage_fraction(accounts: list[AccountDb]) -> float:
         return 0.0
     total = sum(max(0.0, min(1.0, account.five_hour_used_pct or 0.0)) for account in accounts)
     return round(total / len(accounts), 6)
+
+
+def demand_trigger_reached(accounts: list[AccountDb]) -> bool:
+    """Return whether current usage justifies warming the idle pool.
+
+    Pool averaging alone can hide demand when high-usage accounts are held in
+    the weekly reserve and therefore excluded from the eligible denominator.
+    A single busy eligible account is sufficient to justify opening additional
+    windows, so use the greater of aggregate and peak five-hour utilization.
+    """
+    if not accounts:
+        return False
+    aggregate = pool_usage_fraction(accounts)
+    peak = max(max(0.0, min(1.0, account.five_hour_used_pct or 0.0)) for account in accounts)
+    return max(aggregate, peak) + 1e-9 >= settings.WARMUP_TRIGGER_POOL_USAGE_PCT
 
 
 def _try_lock(db: Session) -> bool:
@@ -207,7 +224,7 @@ def warm_pool_if_needed() -> int:
         try:
             accounts = db.query(AccountDb).all()
             eligible = [account for account in accounts if is_eligible(account, now)]
-            if pool_usage_fraction(eligible) + 1e-9 < settings.WARMUP_TRIGGER_POOL_USAGE_PCT:
+            if not demand_trigger_reached(eligible):
                 return 0
             cold = [
                 account

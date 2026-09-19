@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from app import config
 from app.logger import configure_logging, get_logger
-from app.utils import egress, notifications, oauth, provider_health, rotation
+from app.utils import egress, notifications, oauth, provider_health, rotation, warmup
 from app.utils.models.api import ProviderHealth as ProviderHealthEnum
 from app.utils.postgres import AccountDb, get_db_cm
 
@@ -73,6 +73,16 @@ def refresh_once() -> None:
                     code or "unknown",
                     type(exc).__name__,
                 )
+
+    # Keep warm-up independent of inference traffic. The advisory lock inside
+    # warm_pool_if_needed prevents overlap with request-triggered warm-up tasks.
+    if settings.WARMUP_ENABLED:
+        try:
+            warmed = warmup.warm_pool_if_needed()
+            if warmed:
+                logger.info("Automatically warmed %s eligible cold account(s)", warmed)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Automatic warm-up cycle failed (error_type=%s): %s", type(exc).__name__, exc)
 
 
 def main() -> None:

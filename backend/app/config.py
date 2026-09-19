@@ -87,7 +87,9 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60 * 12
 
     QUOTA_REFRESH_INTERVAL_SECONDS: int = 60
-    WARMUP_ENABLED: bool = False
+    # Warm-up is part of the normal pool-management loop. Deployments can
+    # explicitly disable synthetic traffic with WARMUP_ENABLED=false.
+    WARMUP_ENABLED: bool = True
     WARMUP_TRIGGER_POOL_USAGE_PCT: float = 0.10
     WARMUP_WEEKLY_RESERVE_PCT: float = 0.90
     WARMUP_MODEL: str = "gpt-5.6-luna"
