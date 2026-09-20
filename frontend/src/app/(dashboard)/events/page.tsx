@@ -40,6 +40,8 @@ const initialRange = (): TimeRange => {
     };
 };
 const PAGE_SIZE_OPTIONS = [25, 50, 75, 100] as const;
+const OPERATION_OPTIONS = ["inference", "web_search"] as const;
+type Operation = "" | (typeof OPERATION_OPTIONS)[number];
 const DEFAULT_PAGE_SIZE = 25;
 const AUTO_REFRESH_KEY = "dashboard_auto_refresh";
 const REFRESH_SECS_KEY = "dashboard_refresh_secs";
@@ -56,6 +58,12 @@ function displayModel(metadata: Record<string, unknown>): string {
     const effective = String(metadata.model ?? "—");
     const requested = typeof metadata.requested_model === "string" ? metadata.requested_model : "";
     return requested && requested !== effective ? `${effective} (${requested})` : effective;
+}
+
+function displayOperation(metadata: Record<string, unknown>): string {
+    return metadata.operation === "web_search" || metadata.client_protocol === "codex_search"
+        ? "Web search"
+        : "Inference";
 }
 
 function groupByLabel(groupBy: GroupBy): string {
@@ -122,11 +130,17 @@ export default function EventsPage() {
         )
             ? (rawGroupBy as GroupBy)
             : "request";
+        const rawOperation = params.get("operation");
         const rangeLabel = params.get("range");
         return {
             pageSize,
             offset: (page - 1) * pageSize,
             groupBy,
+            operation:
+                rawOperation &&
+                OPERATION_OPTIONS.includes(rawOperation as (typeof OPERATION_OPTIONS)[number])
+                    ? (rawOperation as Operation)
+                    : "",
             eventType: params.get("event") ?? "",
             model: params.get("model") ?? "",
             userId: params.get("user") || null,
@@ -146,6 +160,7 @@ export default function EventsPage() {
     const [eventType, setEventType] = useState("");
     const [model, setModel] = useState("");
     const [groupBy, setGroupBy] = useState<GroupBy>("request");
+    const [operation, setOperation] = useState<Operation>("");
     const [events, setEvents] = useState<ProxyEvent[]>([]);
     const [total, setTotal] = useState(0);
     const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -158,7 +173,12 @@ export default function EventsPage() {
     const [error, setError] = useState<string | null>(null);
     const [captureEventId, setCaptureEventId] = useState<string | null>(null);
     const load = useCallback(
-        (pageOffset = offset, selectedEventType = eventType, selectedModel = model) => {
+        (
+            pageOffset = offset,
+            selectedEventType = eventType,
+            selectedModel = model,
+            selectedOperation = operation,
+        ) => {
             setLoading(true);
             setError(null);
             return api
@@ -171,6 +191,7 @@ export default function EventsPage() {
                     range.end,
                     undefined,
                     selectedModel || undefined,
+                    selectedOperation || undefined,
                 )
                 .then((page) => {
                     setEvents(page.events);
@@ -179,7 +200,7 @@ export default function EventsPage() {
                 .catch((e) => setError(e instanceof Error ? e.message : "Unable to load events."))
                 .finally(() => setLoading(false));
         },
-        [eventType, model, offset, pageSize, range.end, range.start, userId],
+        [eventType, model, offset, operation, pageSize, range.end, range.start, userId],
     );
     const updateUrl = useCallback(
         (updates: Record<string, string | null | undefined>) => {
@@ -219,6 +240,7 @@ export default function EventsPage() {
         setEventType(query.eventType);
         setModel(query.model);
         setGroupBy(query.groupBy);
+        setOperation(query.operation);
         setPageSize(query.pageSize);
         setOffset(query.offset);
         setQueryHydrated(true);
@@ -353,6 +375,18 @@ export default function EventsPage() {
                     allLabel="All models"
                     idPrefix="event-model-options"
                 />
+                <EventTypeFilter
+                    value={operation}
+                    options={[...OPERATION_OPTIONS]}
+                    onChange={(next) => {
+                        setOperation(next as Operation);
+                        setOffset(0);
+                        updateUrl({ operation: next, page: "1" });
+                    }}
+                    label="Operation"
+                    allLabel="All operations"
+                    idPrefix="event-operation-options"
+                />
                 <div className="min-w-[220px]">
                     <span className="text-fog-400 block text-xs">Group by</span>
                     <SelectMenu
@@ -382,6 +416,7 @@ export default function EventsPage() {
                         updateUrl({
                             event: eventType,
                             model,
+                            operation,
                             user: userId,
                             start: range.start,
                             end: range.end,
@@ -413,6 +448,7 @@ export default function EventsPage() {
                                         "Model",
                                         "Thinking",
                                         "Account / provider",
+                                        "Operation",
                                         "Event",
                                         "Input",
                                         "Output",
@@ -448,7 +484,7 @@ export default function EventsPage() {
                                                     key={`group-${key}`}
                                                     className="bg-ink-850 border-ink-700 border-b"
                                                 >
-                                                    <td colSpan={12} className="px-3 py-2 text-xs">
+                                                    <td colSpan={13} className="px-3 py-2 text-xs">
                                                         <span className="text-fog-200 font-medium">
                                                             {groupByLabel(groupBy)}
                                                         </span>
@@ -499,6 +535,17 @@ export default function EventsPage() {
                                                     <td className="text-fog-400 w-80 max-w-80 min-w-80 px-3 py-3 font-mono text-xs whitespace-normal">
                                                         <span className="block [overflow-wrap:anywhere] break-words">
                                                             {String(m.account_name ?? "—")}
+                                                        </span>
+                                                    </td>
+                                                    <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
+                                                        <span
+                                                            className={
+                                                                displayOperation(m) === "Web search"
+                                                                    ? "text-brand-300"
+                                                                    : "text-fog-400"
+                                                            }
+                                                        >
+                                                            {displayOperation(m)}
                                                         </span>
                                                     </td>
                                                     <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">

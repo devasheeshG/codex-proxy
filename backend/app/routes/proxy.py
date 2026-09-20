@@ -106,6 +106,8 @@ _RESPONSE_OPERATIONS: Dict[str, ResponseOperation] = {
     "/responses": "create",
     "/responses/compact": "compact",
 }
+_SEARCH_PATH = "/alpha/search"
+_UPSTREAM_PATHS = {*_RESPONSE_OPERATIONS, _SEARCH_PATH}
 
 
 def _recover_exhausted_accounts_with_cached_credits(db: Session) -> None:
@@ -138,7 +140,7 @@ def _upstream_headers(
 
 
 def _upstream_url(request: Request, upstream_path: str) -> str:
-    if upstream_path not in _RESPONSE_OPERATIONS:
+    if upstream_path not in _UPSTREAM_PATHS:
         raise HTTPException(status_code=404, detail="Unsupported proxy path")
     url = f"{config.UPSTREAM_CODEX_BASE_URL.rstrip('/')}{upstream_path}"
     if request.url.query:
@@ -1081,6 +1083,427 @@ async def proxy_models(
         content=json.dumps(response_body, separators=(",", ":")).encode(),
         status_code=200,
         media_type="application/json",
+    )
+
+
+@router.post(_SEARCH_PATH)
+async def proxy_search(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    key: ApiKeyDb = Depends(security.authenticate_user),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> Response:
+    """Relay Codex's standalone web-search JSON protocol through the account pool."""
+    request.state.proxy_event_request_id = request_context.get_request_context().get("request_id") or f"req_{uuid.uuid4().hex}"
+    body = await request.body()
+    try:
+        parsed_request = json.loads(body)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return _openai_error_response(
+            "The request body must be valid JSON.",
+            status.HTTP_400_BAD_REQUEST,
+            error_type="invalid_request_error",
+            code="invalid_json",
+        )
+    if not isinstance(parsed_request, dict):
+        return _openai_error_response(
+            "The request body must be a JSON object.",
+            status.HTTP_400_BAD_REQUEST,
+            error_type="invalid_request_error",
+            code="invalid_request_body",
+        )
+
+    user = db.query(UserDb).filter(UserDb.id == key.user_id).first()
+    if user is None:
+        raise HTTPException(status_code=401, detail="API key owner no longer exists")
+    request.state.user_priority = user.priority
+    _set_archive_metadata(
+        request,
+        user_id=user.id,
+        api_key_id=key.id,
+        operation="search",
+        client_protocol="codex_search",
+    )
+    _enforce_client_limits(db, key, user)
+
+    requested_model = parsed_request.get("model")
+    request_model = _override_model(user, requested_model)
+    _enforce_model_policy(user, requested_model)
+    if request_model != requested_model:
+        parsed_request["model"] = request_model
+        body = json.dumps(parsed_request, separators=(",", ":")).encode()
+
+    run_metadata = {
+        "session_id": parsed_request.get("id"),
+        "x-codex-turn-metadata": request.headers.get("x-codex-turn-metadata"),
+    }
+    codex_run_context = _extract_codex_run_context({"client_metadata": run_metadata})
+    request.state.codex_run_context = codex_run_context
+    request.state.proxy_model = request_model
+    request.state.proxy_event_context = {
+        "model": request_model,
+        "requested_model": requested_model,
+        "user_priority": user.priority,
+        "operation": "web_search",
+        **codex_run_context,
+    }
+    _emit_event(
+        request,
+        "request.received",
+        user_id=user.id,
+        api_key_id=key.id,
+        metadata={"path": request.url.path, "method": request.method},
+    )
+    _set_archive_metadata(
+        request,
+        requested_model=requested_model,
+        upstream_model=request_model,
+    )
+
+    upstream_url = _upstream_url(request, _SEARCH_PATH)
+    _recover_exhausted_accounts_with_cached_credits(db)
+    excluded: Set[uuid.UUID] = set()
+    max_attempts = db.query(AccountDb).count()
+    pool_wait_deadline = asyncio.get_running_loop().time() + max(0, settings.POOL_WAIT_TIMEOUT_SECONDS)
+    pool_wait_slots = (
+        max(
+            0,
+            int(settings.POOL_WAIT_TIMEOUT_SECONDS / max(settings.POOL_WAIT_POLL_INTERVAL_SECONDS, 0.1)),
+        )
+        + 1
+    )
+    model_rejected = False
+
+    for _ in range(max_attempts + pool_wait_slots):
+        account = rotation.select_account(
+            db,
+            user,
+            excluded,
+            model=str(request_model) if request_model else None,
+        )
+        if account is None:
+            now_monotonic = asyncio.get_running_loop().time()
+            recoverable = (
+                db.query(AccountDb)
+                .filter(
+                    AccountDb.status != AccountStatus.DISABLED,
+                    AccountDb.provider_health != ProviderHealth.REAUTH_REQUIRED,
+                )
+                .count()
+                > 0
+            )
+            if not recoverable or now_monotonic >= pool_wait_deadline:
+                break
+            await asyncio.sleep(
+                min(
+                    settings.POOL_WAIT_POLL_INTERVAL_SECONDS,
+                    pool_wait_deadline - now_monotonic,
+                )
+            )
+            db.expire_all()
+            excluded.clear()
+            continue
+        if not account.chatgpt_account_id:
+            excluded.add(account.id)
+            continue
+
+        _emit_event(
+            request,
+            "account.attempt",
+            user_id=user.id,
+            api_key_id=key.id,
+            account_id=account.id,
+            metadata={"priority": account.priority},
+        )
+        try:
+            candidate = await _send_account_candidate(
+                db,
+                request,
+                body,
+                upstream_url,
+                account,
+            )
+            if candidate.status_code == 401:
+                await candidate.aclose()
+                candidate = await _send_account_candidate(
+                    db,
+                    request,
+                    body,
+                    upstream_url,
+                    account,
+                    force_refresh=True,
+                )
+                if candidate.status_code == 401:
+                    await candidate.aclose()
+                    provider_health.persist_failure(
+                        db,
+                        account.id,
+                        provider_health.reauthentication_error(),
+                    )
+                    excluded.add(account.id)
+                    continue
+        except (account_limiter.AccountBusy, egress.EgressUnavailable) as exc:
+            _emit_event(
+                request,
+                "account.busy",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                message=str(exc),
+            )
+            excluded.add(account.id)
+            continue
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Pooled account %s failed before receiving a search response",
+                account.label,
+            )
+            _emit_event(
+                request,
+                "account.error",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                message="Search request failed before an upstream response",
+            )
+            excluded.add(account.id)
+            continue
+
+        if await _is_capacity_unavailable(candidate):
+            diagnostics = _upstream_diagnostics(candidate)
+            await candidate.aclose()
+            rotation.mark_cooldown(db, account, account.cooldown_seconds)
+            _emit_event(
+                request,
+                "account.capacity",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                status_code=candidate.status_code,
+                message="Provider reported search capacity exhaustion",
+                metadata={**diagnostics, "failure_class": "model_capacity"},
+            )
+            _emit_event(
+                request,
+                "account.cooldown",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                message=f"Cooling down for {account.cooldown_seconds}s",
+            )
+            db.commit()
+            excluded.add(account.id)
+            model_rejected = bool(request_model) or model_rejected
+            continue
+
+        if candidate.extensions.get("proxy_pre_output_failure", False) or candidate.status_code >= 500:
+            diagnostics = _upstream_diagnostics(candidate)
+            await candidate.aclose()
+            transient_seconds = max(
+                1,
+                min(
+                    settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS,
+                    account.cooldown_seconds,
+                ),
+            )
+            rotation.mark_cooldown(db, account, transient_seconds)
+            _emit_event(
+                request,
+                "account.transient_error",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                status_code=candidate.status_code,
+                message="Provider returned a retryable search failure.",
+                metadata={**diagnostics, "failure_class": "transient_upstream"},
+            )
+            db.commit()
+            excluded.add(account.id)
+            continue
+
+        rate_limit_body = await candidate.aread() if candidate.status_code == 429 else b""
+        reached_type = rotation.update_quota_from_headers(account, candidate.headers)
+        body_reached_type, body_reset_at = rotation.apply_rate_limit_body(
+            account,
+            rate_limit_body,
+        )
+        reached_type = body_reached_type or reached_type
+        quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
+        if (account.weekly_used_pct or 0) >= 1.0:
+            try:
+                target = candidate.extensions.get("proxy_egress_target")
+                access_token = rotation.ensure_fresh_token(
+                    db,
+                    account,
+                    egress_target=target,
+                )
+                redeemed = rotation.auto_redeem_weekly_reset(
+                    db,
+                    account,
+                    access_token,
+                    egress_target=target,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "Automatic weekly limit reset failed for pooled account %s",
+                    account.label,
+                )
+                redeemed = False
+            if redeemed and quota_failure:
+                await candidate.aclose()
+                candidate = await _send_account_candidate(
+                    db,
+                    request,
+                    body,
+                    upstream_url,
+                    account,
+                )
+                reached_type = rotation.update_quota_from_headers(
+                    account,
+                    candidate.headers,
+                )
+
+        provider_health.mark_response(account, candidate)
+        if reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
+            notifications.enqueue_account_hard_limit(
+                db,
+                account,
+                settings.FRONTEND_ORIGIN,
+            )
+        else:
+            notifications.enqueue_account_threshold(
+                db,
+                account,
+                settings.FRONTEND_ORIGIN,
+            )
+        db.commit()
+
+        if candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
+            retry_after = rotation.parse_retry_after(
+                candidate.headers,
+                account.cooldown_seconds,
+            )
+            if body_reset_at is not None:
+                retry_after = max(
+                    1,
+                    int((body_reset_at - datetime.now(timezone.utc)).total_seconds()),
+                )
+            diagnostics = _upstream_diagnostics(candidate)
+            await candidate.aclose()
+            rotation.mark_cooldown(db, account, retry_after)
+            _emit_event(
+                request,
+                "account.rate_limited",
+                user_id=user.id,
+                api_key_id=key.id,
+                account_id=account.id,
+                status_code=429,
+                message=f"Cooling down for {retry_after}s",
+                metadata={
+                    **diagnostics,
+                    "failure_class": "account_quota",
+                    "provider_reset_at": body_reset_at,
+                },
+            )
+            db.commit()
+            excluded.add(account.id)
+            continue
+
+        if request_model and await _is_model_unavailable(candidate):
+            await candidate.aclose()
+            excluded.add(account.id)
+            model_rejected = True
+            continue
+        if await _is_empty_upstream_404(candidate):
+            failed_account_id = account.id
+            retry_after = rotation.parse_retry_after(
+                candidate.headers,
+                account.cooldown_seconds,
+            )
+            await candidate.aclose()
+            provider_health.persist_failure(
+                db,
+                failed_account_id,
+                RuntimeError("Upstream returned an empty search 404 response"),
+                context="upstream_search_empty_404",
+            )
+            failed_account = db.get(AccountDb, failed_account_id)
+            if failed_account is not None:
+                rotation.mark_cooldown(db, failed_account, retry_after)
+            db.commit()
+            excluded.add(failed_account_id)
+            continue
+
+        response_headers = _pool_quota_response_headers(
+            db,
+            {header: value for header, value in candidate.headers.items() if header.lower() not in _STRIP_RESPONSE_HEADERS},
+        )
+        content_type = candidate.headers.get("content-type", "application/json").split(";", 1)[0].strip()
+        response_headers = {header: value for header, value in response_headers.items() if header.lower() != "content-type"}
+        raw = await candidate.aread()
+        response_status = candidate.status_code
+        upstream_request_id = candidate.headers.get("x-request-id") or candidate.headers.get("request-id")
+        await candidate.aclose()
+        raw = _restore_requested_model_in_error(
+            raw,
+            response_status,
+            requested_model,
+            request_model,
+        )
+        _emit_event(
+            request,
+            "account.response_received",
+            user_id=user.id,
+            api_key_id=key.id,
+            account_id=account.id,
+            status_code=response_status,
+        )
+        _emit_event(
+            request,
+            "response.returned",
+            user_id=user.id,
+            api_key_id=key.id,
+            account_id=account.id,
+            status_code=response_status,
+            metadata={"upstream_request_id": upstream_request_id},
+        )
+        if response_status < 400:
+            background_tasks.add_task(warmup.warm_pool_if_needed)
+        return Response(
+            content=raw,
+            status_code=response_status,
+            headers=response_headers,
+            media_type=content_type,
+            background=background_tasks,
+        )
+
+    _emit_event(
+        request,
+        "request.exhausted",
+        user_id=user.id,
+        api_key_id=key.id,
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        message="No subscription account could serve the web-search request",
+    )
+    notifications.enqueue_elevated_503(db, settings.FRONTEND_ORIGIN)
+    known_model = bool(request_model) and any(
+        rotation.supports_model(account, str(request_model)) is True
+        for account in db.query(AccountDb).filter(AccountDb.status != AccountStatus.DISABLED).all()
+    )
+    if request_model and (model_rejected or known_model):
+        client_model = requested_model if isinstance(requested_model, str) else request_model
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(f"Model '{client_model}' is temporarily unavailable for web search across the pooled accounts."),
+            headers={"Retry-After": "30"},
+        )
+    notifications.enqueue_pool_unavailable(db, settings.FRONTEND_ORIGIN)
+    db.commit()
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=("All pooled Codex accounts are exhausted, unavailable, or rate-limited for web search."),
+        headers={"Retry-After": "30"},
     )
 
 

@@ -25,6 +25,7 @@ def list_events(
     request_id: Optional[str] = None,
     user_id: Optional[uuid.UUID] = None,
     model: Optional[str] = None,
+    operation: Optional[str] = None,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
     _: str = Depends(security.require_admin),  # noqa: B008
@@ -53,6 +54,19 @@ def list_events(
             )
             .distinct()
         )
+    if operation:
+        operation_marker = or_(
+            ProxyEventDb.metadata_json.contains('"operation":"web_search"'),
+            ProxyEventDb.metadata_json.contains('"operation": "web_search"'),
+            ProxyEventDb.metadata_json.contains('"client_protocol":"codex_search"'),
+            ProxyEventDb.metadata_json.contains('"client_protocol": "codex_search"'),
+        )
+        if operation == "web_search":
+            query = query.filter(operation_marker)
+        elif operation == "inference":
+            query = query.filter(or_(ProxyEventDb.metadata_json.is_(None), ~operation_marker))
+        else:
+            query = query.filter(False)
     if start:
         query = query.filter(ProxyEventDb.created_at >= start)
     if end:

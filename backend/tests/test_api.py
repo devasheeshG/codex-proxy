@@ -2,6 +2,7 @@
 # Description: API tests for admin auth, user management, and the proxy path (non-streaming, streaming, failover).
 
 import json
+import uuid
 
 import httpx
 import respx
@@ -9,6 +10,7 @@ import respx
 CODEX_RESPONSES = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_RESPONSES_COMPACT = f"{CODEX_RESPONSES}/compact"
 CODEX_MODELS = "https://chatgpt.com/backend-api/codex/models"
+CODEX_SEARCH = "https://chatgpt.com/backend-api/codex/alpha/search"
 
 
 def test_login_success_and_failure(client, admin_password):
@@ -556,6 +558,202 @@ def test_proxy_rejects_arbitrary_responses_subpaths(client, make_user):
     assert client.post("/api/v1/responses/arbitrary", headers=headers, json={}).status_code == 404
     assert client.post("/api/v1/responses/resp_123/cancel", headers=headers, json={}).status_code == 404
     assert client.post("/api/v1/responses/input_tokens", headers=headers, json={}).status_code == 404
+
+
+@respx.mock
+def test_proxy_forwards_standalone_search_and_records_correlated_events(
+    client,
+    seed_account,
+    make_user,
+):
+    from app.utils.postgres import ProxyEventDb, UsageRecordDb
+    from app.utils.postgres.base import SessionFactory
+
+    account_id = seed_account("search-account")
+    key = make_user("search-user")
+    request_body = {
+        "id": "session-search-1",
+        "model": "gpt-5.6-sol",
+        "input": "Find the latest documentation",
+        "commands": {"search_query": [{"q": "OpenAI Codex documentation"}]},
+        "settings": {"external_web_access": True},
+        "max_output_tokens": 2500,
+    }
+    search_response = {
+        "encrypted_output": "ciphertext",
+        "output": "Search results",
+        "results": [
+            {
+                "type": "text_result",
+                "ref_id": "turn0search0",
+                "url": "https://developers.openai.com/codex/",
+            }
+        ],
+    }
+    turn_metadata = json.dumps(
+        {
+            "thread_id": "thread-search-1",
+            "turn_id": "turn-search-1",
+            "root_turn_id": "root-search-1",
+        }
+    )
+    respx.route(host="testserver").pass_through()
+
+    def search(request):
+        assert request.headers["authorization"] == "Bearer upstream-access-token"
+        assert request.headers["chatgpt-account-id"] == "chatgpt-search-account"
+        assert request.headers["originator"] == "chatgpt_cca"
+        assert request.headers["x-codex-turn-metadata"] == turn_metadata
+        assert json.loads(request.content) == request_body
+        return httpx.Response(
+            200,
+            headers={"x-request-id": "search-provider-request"},
+            json=search_response,
+        )
+
+    upstream = respx.post(CODEX_SEARCH).mock(side_effect=search)
+    response = client.post(
+        "/api/v1/alpha/search",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Originator": "chatgpt_cca",
+            "X-Codex-Turn-Metadata": turn_metadata,
+        },
+        json=request_body,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == search_response
+    assert upstream.call_count == 1
+    with SessionFactory() as db:
+        events = db.query(ProxyEventDb).filter(ProxyEventDb.codex_session_id == "session-search-1").order_by(ProxyEventDb.created_at.asc()).all()
+        assert [event.event_type for event in events] == [
+            "request.received",
+            "account.attempt",
+            "account.response_received",
+            "response.returned",
+        ]
+        assert all(event.codex_thread_id == "thread-search-1" for event in events)
+        assert all(event.codex_turn_id == "turn-search-1" for event in events)
+        assert all(event.codex_root_turn_id == "root-search-1" for event in events)
+        assert events[-1].account_id == account_id
+        assert db.query(UsageRecordDb).count() == 0
+
+
+@respx.mock
+def test_proxy_search_fails_over_after_account_rate_limit(
+    client,
+    seed_account,
+    make_user,
+):
+    from app.utils.postgres import ProxyEventDb
+    from app.utils.postgres.base import SessionFactory
+
+    first_id = seed_account("search-limited", priority=1)
+    second_id = seed_account("search-healthy", priority=2)
+    key = make_user("search-failover-user")
+    respx.route(host="testserver").pass_through()
+
+    def search(request):
+        if request.headers["chatgpt-account-id"] == "chatgpt-search-limited":
+            return httpx.Response(
+                429,
+                json={
+                    "error": {
+                        "type": "usage_limit_reached",
+                        "message": "The usage limit has been reached",
+                        "resets_in_seconds": 3600,
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={"output": "Recovered", "results": []},
+        )
+
+    upstream = respx.post(CODEX_SEARCH).mock(side_effect=search)
+    response = client.post(
+        "/api/v1/alpha/search",
+        headers={"Authorization": f"Bearer {key}"},
+        json={
+            "id": "session-search-failover",
+            "model": "gpt-5.6-sol",
+            "commands": {"search_query": [{"q": "status"}]},
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["output"] == "Recovered"
+    assert upstream.call_count == 2
+    with SessionFactory() as db:
+        rate_limited = (
+            db.query(ProxyEventDb)
+            .filter(
+                ProxyEventDb.codex_session_id == "session-search-failover",
+                ProxyEventDb.event_type == "account.rate_limited",
+            )
+            .one()
+        )
+        returned = (
+            db.query(ProxyEventDb)
+            .filter(
+                ProxyEventDb.codex_session_id == "session-search-failover",
+                ProxyEventDb.event_type == "response.returned",
+            )
+            .one()
+        )
+        assert rate_limited.account_id == first_id
+        assert returned.account_id == second_id
+
+
+def test_proxy_search_rejects_invalid_json(client, make_user):
+    key = make_user("search-invalid-json")
+    response = client.post(
+        "/api/v1/alpha/search",
+        headers={
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        content=b"not-json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_json"
+
+
+def test_events_operation_filter_separates_search_from_inference(client, admin_headers):
+    from app.utils.postgres import ProxyEventDb
+    from app.utils.postgres.base import SessionFactory
+
+    with SessionFactory() as db:
+        db.add_all(
+            [
+                ProxyEventDb(
+                    id=uuid.uuid4(),
+                    request_id="req-search-event",
+                    event_type="response.returned",
+                    metadata_json=json.dumps(
+                        {"operation": "web_search", "client_protocol": "codex_search"},
+                        separators=(",", ":"),
+                    ),
+                ),
+                ProxyEventDb(
+                    id=uuid.uuid4(),
+                    request_id="req-inference-event",
+                    event_type="response.returned",
+                    metadata_json=json.dumps({"model": "gpt-5.6-sol"}, separators=(",", ":")),
+                ),
+            ]
+        )
+        db.commit()
+
+    search = client.get("/api/v1/events?operation=web_search", headers=admin_headers)
+    inference = client.get("/api/v1/events?operation=inference", headers=admin_headers)
+
+    assert search.status_code == 200
+    assert [event["request_id"] for event in search.json()["events"]] == ["req-search-event"]
+    assert inference.status_code == 200
+    assert [event["request_id"] for event in inference.json()["events"]] == ["req-inference-event"]
 
 
 @respx.mock
