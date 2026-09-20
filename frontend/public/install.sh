@@ -124,6 +124,9 @@ name = "OpenAI"
 base_url = "$MODEL_BASE_URL"
 wire_api = "responses"
 supports_websockets = false
+# Allow long-running reasoning turns to remain connected while the model is
+# thinking before the next SSE frame arrives.
+stream_idle_timeout_ms = 900000
 
 [model_providers.codex_proxy.auth]
 command = "$TOKEN_HELPER"
