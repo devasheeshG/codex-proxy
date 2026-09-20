@@ -301,6 +301,43 @@ def test_threshold_event_is_rendered_and_deduplicated(client, admin_headers, see
         assert "Weekly threshold: 95.0%" in deliveries[0].message
 
 
+def test_hard_limit_supersedes_threshold_at_100_percent(client, admin_headers, seed_account):
+    _configure_telegram(client, admin_headers)
+    account_id = seed_account(
+        "exhausted-account",
+        five_hour_used_pct=1.0,
+        weekly_used_pct=0.40,
+        rotation_threshold=1.0,
+    )
+
+    with SessionFactory() as db:
+        account = db.query(AccountDb).filter(AccountDb.id == account_id).one()
+        assert notifications.enqueue_account_threshold(db, account) == 0
+        assert notifications.enqueue_account_hard_limit(db, account) == 1
+        assert notifications.enqueue_account_threshold(db, account) == 0
+        db.commit()
+
+    with SessionFactory() as db:
+        assert db.query(NotificationDeliveryDb).filter(NotificationDeliveryDb.event_type == "account_quota_threshold").count() == 0
+        assert db.query(NotificationDeliveryDb).filter(NotificationDeliveryDb.event_type == "account_hard_limit").count() == 1
+
+
+def test_hard_limit_suppresses_an_already_queued_threshold(client, admin_headers, seed_account):
+    _configure_telegram(client, admin_headers)
+    account_id = seed_account("hard-after-threshold", five_hour_used_pct=0.97, weekly_used_pct=0.40, rotation_threshold=0.95)
+
+    with SessionFactory() as db:
+        account = db.query(AccountDb).filter(AccountDb.id == account_id).one()
+        assert notifications.enqueue_account_threshold(db, account) == 1
+        assert notifications.enqueue_account_hard_limit(db, account) == 1
+        db.commit()
+
+    with SessionFactory() as db:
+        threshold = db.query(NotificationDeliveryDb).filter(NotificationDeliveryDb.event_type == "account_quota_threshold").one()
+        assert threshold.status == "suppressed"
+        assert db.query(NotificationDeliveryDb).filter(NotificationDeliveryDb.event_type == "account_hard_limit").count() == 1
+
+
 def test_exhausted_503_alerts_for_one_user_and_respects_cooldown(client, admin_headers, make_user):
     _configure_telegram(client, admin_headers)
     make_user("single-503")

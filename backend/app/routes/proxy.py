@@ -1364,7 +1364,8 @@ async def proxy_search(
                 )
 
         provider_health.mark_response(account, candidate)
-        if reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
+        hard_limit = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
+        if hard_limit:
             notifications.enqueue_account_hard_limit(
                 db,
                 account,
@@ -1378,7 +1379,7 @@ async def proxy_search(
             )
         db.commit()
 
-        if candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
+        if hard_limit:
             retry_after = rotation.parse_retry_after(
                 candidate.headers,
                 account.cooldown_seconds,
@@ -1825,12 +1826,13 @@ async def proxy_responses(
                 candidate = await _send_account_candidate(db, request, body, upstream_url, account)
                 reached_type = rotation.update_quota_from_headers(account, candidate.headers)
         provider_health.mark_response(account, candidate)
-        if reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
+        hard_limit = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
+        if hard_limit:
             notifications.enqueue_account_hard_limit(db, account, settings.FRONTEND_ORIGIN)
         else:
             notifications.enqueue_account_threshold(db, account, settings.FRONTEND_ORIGIN)
         db.commit()
-        if candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES:
+        if hard_limit:
             retry_after = rotation.parse_retry_after(
                 candidate.headers,
                 account.cooldown_seconds,

@@ -615,14 +615,46 @@ def enqueue_notifier_installed(db: Session, channel: NotificationChannelDb, dash
 
 
 def enqueue_account_threshold(db: Session, account: AccountDb, dashboard_url: str = "") -> int:
-    if rotation.blocking_quota_window(account) is None:
+    window = rotation.blocking_quota_window(account)
+    if window is None:
         return 0
     key = f"{account.id}:{_reset_key(account)}"
+    # A 100% configured threshold is the hard-limit boundary. The hard-limit
+    # notification is the only useful alert at that boundary; do not enqueue a
+    # second threshold message for the same exhausted window.
+    if window.threshold >= 1.0 and (window.used_pct or 0) >= 1.0:
+        return 0
+    # A confirmed hard-limit alert supersedes a threshold alert for this
+    # account/reset cycle, even when the quota refresher and request path race.
+    if (
+        db.query(NotificationDeliveryDb)
+        .filter(
+            NotificationDeliveryDb.event_type == "account_hard_limit",
+            NotificationDeliveryDb.event_key.like(f"{key}%"),
+            NotificationDeliveryDb.status != "suppressed",
+        )
+        .first()
+        is not None
+    ):
+        return 0
     return enqueue_event(db, "account_quota_threshold", account_context(db, account, dashboard_url), key)
 
 
 def enqueue_account_hard_limit(db: Session, account: AccountDb, dashboard_url: str = "") -> int:
     key = f"{account.id}:{_reset_key(account)}"
+    # Remove threshold deliveries that are still in the outbox. A hard-limit
+    # notification has precedence for every enabled channel in this cycle.
+    db.query(NotificationDeliveryDb).filter(
+        NotificationDeliveryDb.event_type == "account_quota_threshold",
+        NotificationDeliveryDb.event_key.like(f"{key}%"),
+        NotificationDeliveryDb.status.in_(("pending", "failed")),
+    ).update(
+        {
+            NotificationDeliveryDb.status: "suppressed",
+            NotificationDeliveryDb.last_error: "Superseded by account_hard_limit",
+        },
+        synchronize_session=False,
+    )
     return enqueue_event(db, "account_hard_limit", account_context(db, account, dashboard_url), key)
 
 
