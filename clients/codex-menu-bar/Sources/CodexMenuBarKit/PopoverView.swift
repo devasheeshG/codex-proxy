@@ -129,7 +129,7 @@ private struct AccountRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack { VStack(alignment: .leading, spacing: 2) { Text(account.name).font(.subheadline.bold()); Text(account.email).font(.caption2).foregroundStyle(.secondary) }; Spacer(); Label(stateLabel, systemImage: "circle.fill").font(.caption2).foregroundStyle(stateColor) }
-            HStack(spacing: 8) { Quota(title: "5-hour", value: account.fiveHour, reset: "resets (account.fiveHourReset)"); Quota(title: "Weekly", value: account.weekly, reset: "resets (account.weeklyReset)") }
+            HStack(spacing: 8) { Quota(title: "5-hour", value: account.fiveHour, reset: "resets " + account.fiveHourReset); Quota(title: "Weekly", value: account.weekly, reset: "resets " + account.weeklyReset) }
         }
         .padding(10)
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 9))
