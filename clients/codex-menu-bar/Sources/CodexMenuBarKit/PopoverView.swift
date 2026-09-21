@@ -32,7 +32,7 @@ public struct PopoverView: View {
 
             Divider()
             HStack {
-                Text("Updated (model.lastUpdated, style: .relative) ago")
+                Text("Updated ") + Text(model.lastUpdated, style: .relative) + Text(" ago")
                 Spacer()
                 Button("Open dashboard") { }
                     .buttonStyle(.link)
