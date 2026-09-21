@@ -10,6 +10,12 @@ public final class DashboardModel: ObservableObject {
         let name: String
         let email: String
         let state: AccountState
+        /// Mirrors the dashboard's Authenticated filter: credentials are present
+        /// (including accounts that are currently cooling down).
+        let authenticated: Bool
+        /// Mirrors the dashboard's Usable filter: the router can select this
+        /// account for a request right now.
+        let usable: Bool
         let fiveHour: Int
         let weekly: Int
         let fiveHourReset: String
@@ -28,10 +34,10 @@ public final class DashboardModel: ObservableObject {
     }
 
     let accounts: [Account] = [
-        Account(name: "Shabbir", email: "jamilakhand.jk@gmail.com", state: .ready, fiveHour: 18, weekly: 42, fiveHourReset: "3h 34m", weeklyReset: "6d 22h"),
-        Account(name: "Devasheesh", email: "devasheesh@recallrai.com", state: .ready, fiveHour: 63, weekly: 71, fiveHourReset: "2h 12m", weeklyReset: "4d 17h"),
-        Account(name: "Animesh", email: "animesh3720@gmail.com", state: .cooling, fiveHour: 100, weekly: 45, fiveHourReset: "1h 56m", weeklyReset: "2d 17h"),
-        Account(name: "Vishal", email: "vishalpachpor06@gmail.com", state: .reauth, fiveHour: 0, weekly: 2, fiveHourReset: "unknown", weeklyReset: "5d 23h"),
+        Account(name: "Shabbir", email: "jamilakhand.jk@gmail.com", state: .ready, authenticated: true, usable: true, fiveHour: 18, weekly: 42, fiveHourReset: "3h 34m", weeklyReset: "6d 22h"),
+        Account(name: "Devasheesh", email: "devasheesh@recallrai.com", state: .ready, authenticated: true, usable: true, fiveHour: 63, weekly: 71, fiveHourReset: "2h 12m", weeklyReset: "4d 17h"),
+        Account(name: "Animesh", email: "animesh3720@gmail.com", state: .cooling, authenticated: true, usable: false, fiveHour: 100, weekly: 45, fiveHourReset: "1h 56m", weeklyReset: "2d 17h"),
+        Account(name: "Vishal", email: "vishalpachpor06@gmail.com", state: .reauth, authenticated: false, usable: false, fiveHour: 0, weekly: 2, fiveHourReset: "unknown", weeklyReset: "5d 23h"),
     ]
 
     func refresh() {

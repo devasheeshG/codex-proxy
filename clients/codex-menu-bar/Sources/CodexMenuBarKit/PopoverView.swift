@@ -102,7 +102,13 @@ private struct AccountsView: View {
     @State private var filter = "All"
 
     private var visibleAccounts: [DashboardModel.Account] {
-        model.accounts.filter { filter == "All" || (filter == "Usable" && $0.state == .ready) || (filter == "Cooling" && $0.state == .cooling) || (filter == "Re-auth" && $0.state == .reauth) }
+        model.accounts.filter {
+            switch filter {
+            case "Authenticated": return $0.authenticated
+            case "Usable": return $0.usable
+            default: return true
+            }
+        }
     }
 
     var body: some View {
@@ -111,7 +117,7 @@ private struct AccountsView: View {
                 VStack(alignment: .leading, spacing: 2) { Text("Account pool").font(.title3.bold()); Text("12 accounts · 8 usable · 2 re-auth · 2 cooling").font(.caption).foregroundStyle(.secondary) }
                 Spacer()
             }
-            Picker("Filter", selection: $filter) { ForEach(["All", "Usable", "Re-auth", "Cooling"], id: \.self) { Text($0).tag($0) } }
+            Picker("Filter", selection: $filter) { ForEach(["All", "Authenticated", "Usable"], id: \.self) { Text($0).tag($0) } }
                 .pickerStyle(.segmented)
                 .controlSize(.small)
             ForEach(visibleAccounts) { account in AccountRow(account: account) }
