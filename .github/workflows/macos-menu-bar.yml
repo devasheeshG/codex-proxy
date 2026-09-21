@@ -1,0 +1,63 @@
+name: macOS menu bar app
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "clients/codex-menu-bar/**"
+      - ".github/workflows/macos-menu-bar.yml"
+  push:
+    branches: [main]
+    paths:
+      - "clients/codex-menu-bar/**"
+      - ".github/workflows/macos-menu-bar.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build native macOS app
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: clients/codex-menu-bar
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: swift build --configuration release
+
+      - name: Render native SwiftUI snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          cp Sources/CodexMenuBar/Resources/OpenAIMark.svg .build/release/OpenAIMark.svg
+          .build/release/CodexMenuBarSnapshot "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-popover.png"
+          sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-popover.png"
+
+      - name: Assemble application bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$RUNNER_TEMP/Codex Proxy.app"
+          mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+          cp .build/release/CodexMenuBar "$APP/Contents/MacOS/CodexMenuBar"
+          cp Resources/Info.plist "$APP/Contents/Info.plist"
+          cp Sources/CodexMenuBar/Resources/OpenAIMark.svg "$APP/Contents/Resources/OpenAIMark.svg"
+          chmod +x "$APP/Contents/MacOS/CodexMenuBar"
+          plutil -lint "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          ditto -c -k --keepParent "$APP" "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-macOS-unsigned.zip"
+
+      - name: Upload unsigned application
+        uses: actions/upload-artifact@v4
+        with:
+          name: Codex-Proxy-macOS
+          path: |
+            artifacts/Codex-Proxy-macOS-unsigned.zip
+            artifacts/Codex-Proxy-popover.png
+          if-no-files-found: error
