@@ -3,10 +3,13 @@ import CodexMenuBarKit
 import SwiftUI
 
 @MainActor
-func renderSnapshot(to destination: URL) throws {
+func renderSnapshot(to destination: URL, showAccounts: Bool) throws {
     NSApplication.shared.setActivationPolicy(.prohibited)
 
     let model = DashboardModel()
+    if showAccounts {
+        model.showAccounts()
+    }
     let rootView = PopoverView(model: model)
         .frame(width: 390, height: 620)
         .environment(\.colorScheme, .dark)
@@ -31,9 +34,10 @@ enum SnapshotError: Error {
 }
 
 let output = CommandLine.arguments.dropFirst().first ?? "Codex-Proxy-popover.png"
+let showAccounts = CommandLine.arguments.contains("--accounts")
 Task { @MainActor in
     do {
-        try renderSnapshot(to: URL(fileURLWithPath: output))
+        try renderSnapshot(to: URL(fileURLWithPath: output), showAccounts: showAccounts)
         print("Snapshot written to \(output)")
         exit(0)
     } catch {

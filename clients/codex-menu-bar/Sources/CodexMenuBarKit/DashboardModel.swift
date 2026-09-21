@@ -23,6 +23,10 @@ public final class DashboardModel: ObservableObject {
 
     public init() {}
 
+    public func showAccounts() {
+        tab = .accounts
+    }
+
     let accounts: [Account] = [
         Account(name: "Shabbir", email: "jamilakhand.jk@gmail.com", state: .ready, fiveHour: 18, weekly: 42, fiveHourReset: "3h 34m", weeklyReset: "6d 22h"),
         Account(name: "Devasheesh", email: "devasheesh@recallrai.com", state: .ready, fiveHour: 63, weekly: 71, fiveHourReset: "2h 12m", weeklyReset: "4d 17h"),

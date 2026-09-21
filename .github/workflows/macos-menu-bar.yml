@@ -34,8 +34,10 @@ jobs:
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           cp Sources/CodexMenuBar/Resources/OpenAIMark.svg .build/release/OpenAIMark.svg
-          .build/release/CodexMenuBarSnapshot "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-popover.png"
-          sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-popover.png"
+          .build/release/CodexMenuBarSnapshot "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-overview.png"
+          .build/release/CodexMenuBarSnapshot "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-accounts.png" --accounts
+          sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-overview.png"
+          sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-accounts.png"
 
       - name: Assemble application bundle
         shell: bash
@@ -59,5 +61,6 @@ jobs:
           name: Codex-Proxy-macOS
           path: |
             artifacts/Codex-Proxy-macOS-unsigned.zip
-            artifacts/Codex-Proxy-popover.png
+            artifacts/Codex-Proxy-overview.png
+            artifacts/Codex-Proxy-accounts.png
           if-no-files-found: error
