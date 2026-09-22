@@ -41,15 +41,6 @@ jobs:
       - name: Build release binary
         run: swift build --configuration release
 
-      - name: Render release screenshots
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          cp Sources/CodexMenuBar/Resources/OpenAIMark.svg .build/release/OpenAIMark.svg
-          .build/release/CodexMenuBarSnapshot "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-overview.png"
-          .build/release/CodexMenuBarSnapshot "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-accounts.png" --accounts
-
       - name: Assemble and sign application bundle
         shell: bash
         env:
@@ -61,12 +52,20 @@ jobs:
           cp .build/release/CodexMenuBar "$app/Contents/MacOS/CodexMenuBar"
           cp Resources/Info.plist "$app/Contents/Info.plist"
           cp Sources/CodexMenuBar/Resources/OpenAIMark.svg "$app/Contents/Resources/OpenAIMark.svg"
+          iconset="$RUNNER_TEMP/CodexProxy.iconset"
+          mkdir -p "$iconset"
+          for size in 16 32 128 256 512; do
+            sips -s format png -z "$size" "$size" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}.png" >/dev/null
+            doubled=$((size * 2))
+            sips -s format png -z "$doubled" "$doubled" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$app/Contents/Info.plist"
           chmod +x "$app/Contents/MacOS/CodexMenuBar"
           codesign --force --deep --sign - "$app"
           codesign --verify --deep --strict "$app"
-          ditto -c -k --keepParent "$app" "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-macOS.zip"
+          hdiutil create -volname "Codex Proxy" -srcfolder "$app" -ov -format UDZO "$GITHUB_WORKSPACE/artifacts/Codex-Proxy-macOS.dmg" >/dev/null
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
@@ -77,6 +76,4 @@ jobs:
           generate_release_notes: true
           prerelease: true
           files: |
-            artifacts/Codex-Proxy-macOS.zip
-            artifacts/Codex-Proxy-overview.png
-            artifacts/Codex-Proxy-accounts.png
+            artifacts/Codex-Proxy-macOS.dmg

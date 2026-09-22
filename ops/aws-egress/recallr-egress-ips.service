@@ -1,5 +1,5 @@
 [Unit]
-Description=Materialize EC2 secondary private IPs for Recallr egress relays
+Description=Materialize EC2 secondary private IPs for proxy egress relays
 Wants=network-online.target
 After=network-online.target
 Before=docker.service

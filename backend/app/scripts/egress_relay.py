@@ -228,7 +228,7 @@ async def run() -> None:
     targets = _parse_targets(os.getenv("EGRESS_TARGETS_JSON", ""))
     for target in targets:
         _verify_local_address(target.source_ip)
-    username = os.getenv("EGRESS_RELAY_USERNAME", "recallr")
+    username = os.getenv("EGRESS_RELAY_USERNAME", "proxy")
     encoded = base64.b64encode(f"{username}:{token}".encode()).decode()
     expected_auth = f"Basic {encoded}"
     allowed_hosts = tuple(

@@ -36,9 +36,10 @@ If you use the dashboard from a Mac, the companion menu-bar app provides compact
 Overview and Accounts views, including the same `All`, `Authenticated`, and
 `Usable` account filters. The latest ad-hoc-signed build is published at the
 [Codex Proxy macOS releases](https://github.com/devasheeshG/codex-proxy/releases)
-page. Download `Codex-Proxy-macOS.zip`, unzip it, and move **Codex Proxy.app**
-to Applications. This build is intended for local use; macOS may require
-Control-clicking the app and choosing **Open** because it is not notarized.
+page. Download `Codex-Proxy-macOS.dmg`, open the disk image, and move **Codex
+Proxy.app** to Applications. This build is intended for local use; macOS may
+require Control-clicking the app and choosing **Open** because it is not
+notarized.
 
 ## Project status
 

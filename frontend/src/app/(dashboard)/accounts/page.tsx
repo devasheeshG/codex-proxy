@@ -1381,7 +1381,7 @@ function EditAccountModal({
                             value={workspaceName}
                             onChange={(event) => setWorkspaceName(event.target.value)}
                             maxLength={200}
-                            placeholder="e.g. Recallr AI"
+                            placeholder="e.g. Team proxy"
                         />
                     </Field>
                 ) : null}

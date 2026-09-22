@@ -111,7 +111,7 @@ class Settings(BaseSettings):
     # historical direct server route. See README for proxy/local target shapes.
     EGRESS_TARGETS_JSON: str = ""
     DEFAULT_EGRESS_MAX_CONCURRENCY: int = 32
-    EGRESS_RELAY_USERNAME: str = "recallr"
+    EGRESS_RELAY_USERNAME: str = "proxy"
     EGRESS_RELAY_TOKEN: str = ""
 
     # Immutable request/response capture. Hot-tier bodies are raw JSON; the

@@ -49,7 +49,7 @@ def test_invalid_target_configs_fail_closed(raw):
 
 
 def test_relay_parses_authenticated_connect_request():
-    authorization = base64.b64encode(b"recallr:test-token").decode()
+    authorization = base64.b64encode(b"proxy:test-token").decode()
     host, port, headers = egress_relay._parse_connect_request(
         (f"CONNECT chatgpt.com:443 HTTP/1.1\r\nHost: chatgpt.com:443\r\nProxy-Authorization: Basic {authorization}\r\n\r\n").encode()
     )
