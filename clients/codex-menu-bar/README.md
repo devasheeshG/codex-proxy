@@ -8,6 +8,10 @@ Native SwiftUI menu-bar client for the Codex Proxy dashboard. It targets macOS 1
 swift build --package-path clients/codex-menu-bar --configuration release
 ```
 
-The GitHub `macOS menu bar app` workflow builds an ad-hoc-signed `.app`, renders the actual SwiftUI popover into a PNG, and uploads both as workflow artifacts.
+The [Codex Proxy macOS releases](https://github.com/devasheeshG/codex-proxy/releases)
+page publishes an ad-hoc-signed `Codex-Proxy-macOS.zip` together with the actual
+SwiftUI overview and accounts screenshots. Unzip it and move **Codex Proxy.app**
+to Applications. The app can be opened with Control-click if Gatekeeper warns
+that the ad-hoc build is not notarized.
 
 Production distribution still requires a Developer ID Application certificate and Apple notarization. Signing credentials must be stored in CI secrets and must never be committed to this repository.

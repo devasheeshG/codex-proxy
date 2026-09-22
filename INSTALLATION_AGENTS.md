@@ -182,6 +182,13 @@ pretend they were completed automatically.
 6. If requested, configure Telegram in Notifications through the dashboard,
    enter the bot token privately, send a test notification, and enable only the
    desired events. API fallback remains off for users unless explicitly enabled.
+7. Ask whether I also want the optional macOS menu-bar app installed on a Mac.
+   Only continue if I explicitly opt in and the agent has access to that Mac.
+   Download the latest `Codex-Proxy-macOS.zip` from
+   `https://github.com/devasheeshG/codex-proxy/releases`, unzip it into
+   `/Applications`, and explain that the build is ad-hoc signed rather than
+   notarized. If Gatekeeper blocks first launch, have me Control-click **Codex
+   Proxy.app** and choose **Open**. Never ask for or handle my macOS password.
 
 Final handoff
 -------------

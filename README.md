@@ -30,6 +30,16 @@ to use an existing Postgres instance before it builds, configures credentials,
 creates the first user, installs the client helper, and verifies the deployment.
 No manual installation steps are required.
 
+### Optional macOS menu-bar app
+
+If you use the dashboard from a Mac, the companion menu-bar app provides compact
+Overview and Accounts views, including the same `All`, `Authenticated`, and
+`Usable` account filters. The latest ad-hoc-signed build is published at the
+[Codex Proxy macOS releases](https://github.com/devasheeshG/codex-proxy/releases)
+page. Download `Codex-Proxy-macOS.zip`, unzip it, and move **Codex Proxy.app**
+to Applications. This build is intended for local use; macOS may require
+Control-clicking the app and choosing **Open** because it is not notarized.
+
 ## Project status
 
 This project was built quickly and entirely through AI-assisted development—
