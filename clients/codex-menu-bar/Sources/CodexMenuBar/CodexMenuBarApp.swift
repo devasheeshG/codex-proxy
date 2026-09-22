@@ -9,7 +9,11 @@ struct CodexMenuBarApp: App {
     var body: some Scene {
         MenuBarExtra {
             PopoverView(model: model)
-                .frame(width: 390)
+                .frame(
+                    width: model.isConfigured ? 720 : 390,
+                    height: model.isConfigured ? 640 : 360
+                )
+                .animation(.easeInOut(duration: 0.22), value: model.isConfigured)
         } label: {
             Image(nsImage: OpenAIMark.image)
                 .renderingMode(.template)

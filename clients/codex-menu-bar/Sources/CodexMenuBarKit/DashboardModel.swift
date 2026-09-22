@@ -29,26 +29,45 @@ public final class DashboardModel: ObservableObject {
     @Published var selectedProvider = "Codex pool"
     @Published var baseURL: String
     @Published var username: String
-    @Published var secret: String
+    @Published var password: String
+    @Published private(set) var isAuthenticated = false
 
     public init() {
         baseURL = UserDefaults.standard.string(forKey: "proxy.baseURL") ?? ""
         username = UserDefaults.standard.string(forKey: "proxy.username") ?? ""
-        secret = SecureStore.read(service: "proxy.credentials") ?? ""
+        password = SecureStore.read(service: "proxy.dashboard.password") ?? ""
+        isAuthenticated = SecureStore.read(service: "proxy.dashboard.token") != nil
     }
 
     var isConfigured: Bool {
-        !baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-            (!secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        isAuthenticated
     }
 
-    func saveConnection() {
-        baseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+    func authenticate(baseURL rawBaseURL: String, username rawUsername: String, password rawPassword: String) async throws {
+        let baseURL = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let username = rawUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !baseURL.isEmpty, !username.isEmpty, !rawPassword.isEmpty else { throw ConnectionError.missingFields }
+        let loginPath = baseURL.hasSuffix("/api") ? "/v1/auth/login" : "/api/v1/auth/login"
+        guard let url = URL(string: baseURL + loginPath) else { throw ConnectionError.invalidURL }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder().encode(LoginRequest(username: username, password: rawPassword))
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw ConnectionError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else {
+            let detail = (try? JSONDecoder().decode(ErrorResponse.self, from: data).detail) ?? "Sign-in failed (HTTP \(http.statusCode))."
+            throw ConnectionError.server(detail)
+        }
+        let token = try JSONDecoder().decode(LoginResponse.self, from: data).token
+        self.baseURL = baseURL
+        self.username = username
+        self.password = rawPassword
         UserDefaults.standard.set(baseURL, forKey: "proxy.baseURL")
         UserDefaults.standard.set(username, forKey: "proxy.username")
-        SecureStore.write(secret, service: "proxy.credentials")
+        SecureStore.write(rawPassword, service: "proxy.dashboard.password")
+        SecureStore.write(token, service: "proxy.dashboard.token")
+        isAuthenticated = true
     }
 
     public func showAccounts() {
@@ -68,6 +87,21 @@ public final class DashboardModel: ObservableObject {
             try? await Task.sleep(for: .milliseconds(500))
             lastUpdated = Date()
             isRefreshing = false
+        }
+    }
+}
+
+private struct LoginRequest: Encodable { let username: String; let password: String }
+private struct LoginResponse: Decodable { let token: String }
+private struct ErrorResponse: Decodable { let detail: String }
+private enum ConnectionError: LocalizedError {
+    case missingFields, invalidURL, invalidResponse, server(String)
+    var errorDescription: String? {
+        switch self {
+        case .missingFields: "Base URL, username, and password are required."
+        case .invalidURL: "Enter a valid proxy base URL."
+        case .invalidResponse: "The proxy returned an invalid response."
+        case .server(let message): message
         }
     }
 }
