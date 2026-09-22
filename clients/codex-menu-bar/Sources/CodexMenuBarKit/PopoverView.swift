@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 public struct PopoverView: View {
@@ -38,6 +39,13 @@ public struct PopoverView: View {
                 Button("Open dashboard") { }
                     .buttonStyle(.link)
                     .font(.caption)
+                Button { NSApplication.shared.terminate(nil) } label: {
+                    Label("Quit", systemImage: "power")
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("Quit Codex Proxy")
             }
             .foregroundStyle(.secondary)
             .font(.caption2)
