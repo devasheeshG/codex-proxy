@@ -39,7 +39,7 @@ public final class DashboardModel: ObservableObject {
         isAuthenticated = SecureStore.read(service: "proxy.dashboard.token") != nil
     }
 
-    var isConfigured: Bool {
+    public var isConfigured: Bool {
         isAuthenticated
     }
 
