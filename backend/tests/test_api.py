@@ -227,6 +227,7 @@ def test_per_user_model_override_rewrites_before_upstream_routing(client, admin_
 
     assert response.status_code == 200, response.text
     assert json.loads(upstream.calls[0].request.content)["model"] == "gpt-5.6-sol"
+    assert response.json()["model"] == "gpt-6-astra"
 
 
 def test_model_override_uses_requested_name_in_pool_unavailable_error(client, admin_headers, seed_account):
@@ -1605,6 +1606,8 @@ def test_proxy_streaming_relays_and_records(client, admin_headers, seed_account,
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert "response.completed" in resp.text
+    assert '"model":"x"' in resp.text
+    assert '"model":"gpt-5.4"' not in resp.text
     assert json.loads(route.calls[0].request.content)["input"] == [
         {
             "role": "user",
@@ -1618,6 +1621,7 @@ def test_proxy_streaming_relays_and_records(client, admin_headers, seed_account,
     assert record["cached_input_tokens"] == 3
     assert record["cache_write_tokens"] == 4
     assert record["reasoning_level"] == "high"
+    assert record["model"] == "gpt-5.4"
 
 
 @respx.mock

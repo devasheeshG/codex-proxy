@@ -887,6 +887,62 @@ def _restore_requested_model_in_error(
     )
 
 
+def _rewrite_client_model_fields(payload: object, requested_model: object) -> None:
+    """Make successful client-visible model fields match the user's request.
+
+    Usage capture happens before this rewrite, so internal accounting retains
+    the provider-reported model while API clients see their requested alias.
+    """
+    if not isinstance(requested_model, str) or not requested_model.strip():
+        return
+    if not isinstance(payload, dict):
+        return
+
+    if isinstance(payload.get("model"), str):
+        payload["model"] = requested_model
+    for envelope in ("response", "message"):
+        nested = payload.get(envelope)
+        if isinstance(nested, dict) and isinstance(nested.get("model"), str):
+            nested["model"] = requested_model
+
+
+def _restore_requested_model_in_success_json(raw: bytes, status_code: int, requested_model: object) -> bytes:
+    if status_code >= 400 or not isinstance(requested_model, str) or not requested_model.strip():
+        return raw
+    try:
+        payload = json.loads(raw)
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+        return raw
+    if not isinstance(payload, dict):
+        return raw
+    _rewrite_client_model_fields(payload, requested_model)
+    return json.dumps(payload, separators=(",", ":")).encode()
+
+
+def _restore_requested_model_in_sse_frame(frame: bytes, requested_model: object) -> bytes:
+    if not isinstance(requested_model, str) or not requested_model.strip():
+        return frame
+    output = bytearray()
+    for line in frame.splitlines(keepends=True):
+        if not line.startswith(b"data:"):
+            output.extend(line)
+            continue
+        content = line.rstrip(b"\r\n")
+        newline = line[len(content) :]
+        payload = content[len(b"data:") :].strip()
+        if not payload or payload == b"[DONE]":
+            output.extend(line)
+            continue
+        try:
+            value = json.loads(payload)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            output.extend(line)
+            continue
+        _rewrite_client_model_fields(value, requested_model)
+        output.extend(b"data: " + json.dumps(value, separators=(",", ":")).encode() + newline)
+    return bytes(output)
+
+
 async def _send_candidate(
     connection: egress.EgressConnection,
     request: Request,
@@ -1451,6 +1507,7 @@ async def proxy_search(
             requested_model,
             request_model,
         )
+        raw = _restore_requested_model_in_success_json(raw, response_status, requested_model)
         _emit_event(
             request,
             "account.response_received",
@@ -2159,6 +2216,7 @@ async def proxy_responses(
                 media_type="application/json",
                 background=background_tasks,
             )
+        _rewrite_client_model_fields(terminal_response, requested_model)
         response_headers = {header: value for header, value in response_headers.items() if header.lower() != "content-type"}
         response_body: object = terminal_response
         if is_chat_completion and chat_metadata is not None:
@@ -2186,13 +2244,17 @@ async def proxy_responses(
             reasoning_level=request_reasoning,
             request_mode=request_mode,
         )
-        translator = chat_completions.ChatCompletionStreamTranslator(request_model, chat_metadata)
+        translator = chat_completions.ChatCompletionStreamTranslator(
+            requested_model if isinstance(requested_model, str) else request_model,
+            chat_metadata,
+        )
 
         async def chat_stream_body():
             try:
                 async for chunk in _iter_sanitized_sse(response):
                     accumulator.feed(chunk)
-                    for translated in translator.feed(chunk):
+                    client_chunk = _restore_requested_model_in_sse_frame(chunk, requested_model)
+                    for translated in translator.feed(client_chunk):
                         yield translated
                 for translated in translator.finish():
                     yield translated
@@ -2260,6 +2322,7 @@ async def proxy_responses(
             run_context,
         )
         _archive_usage(request, parsed_usage)
+        raw = _restore_requested_model_in_success_json(raw, response_status, requested_model)
         return Response(
             content=raw,
             status_code=response_status,
@@ -2278,7 +2341,7 @@ async def proxy_responses(
         try:
             async for chunk in _iter_sanitized_sse(response):
                 accumulator.feed(chunk)
-                yield chunk
+                yield _restore_requested_model_in_sse_frame(chunk, requested_model)
         finally:
             await response.aclose()
             captured_usage = accumulator.result()
