@@ -12,25 +12,30 @@ public struct PopoverView: View {
     public var body: some View {
         VStack(spacing: 0) {
             header
-            Picker("View", selection: $model.tab) {
-                ForEach(DashboardModel.Tab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 14)
-            .padding(.top, 11)
-
-            ScrollView {
-                Group {
-                    switch model.tab {
-                    case .overview: OverviewView(model: model)
-                    case .accounts: AccountsView(model: model)
+            if showingSettings {
+                ConnectionSettings(model: model) { showingSettings = false }
+                    .padding(14)
+            } else {
+                Picker("View", selection: $model.tab) {
+                    ForEach(DashboardModel.Tab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
                     }
                 }
-                .padding(14)
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 14)
+                .padding(.top, 11)
+
+                ScrollView {
+                    Group {
+                        switch model.tab {
+                        case .overview: OverviewView(model: model)
+                        case .accounts: AccountsView(model: model)
+                        }
+                    }
+                    .padding(14)
+                }
+                .scrollIndicators(.hidden)
             }
-            .scrollIndicators(.hidden)
 
             Divider()
             HStack {
@@ -53,7 +58,6 @@ public struct PopoverView: View {
             .padding(.vertical, 10)
         }
         .background(.regularMaterial)
-        .sheet(isPresented: $showingSettings) { ConnectionSettings(model: model) }
     }
 
     private var header: some View {
@@ -65,8 +69,8 @@ public struct PopoverView: View {
                 .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
             VStack(alignment: .leading, spacing: 2) { Text("Codex Proxy").font(.headline); Text("Menu bar dashboard").font(.caption).foregroundStyle(.secondary) }
             Spacer()
-            Button { showingSettings = true } label: { Image(systemName: "gearshape").font(.body) }
-                .buttonStyle(.borderless).help("Connection settings")
+            Button { showingSettings.toggle() } label: { Image(systemName: showingSettings ? "xmark" : "gearshape").font(.body) }
+                .buttonStyle(.borderless).help(showingSettings ? "Close settings" : "Connection settings")
             Label(model.isConfigured ? "Configured" : "Not configured", systemImage: model.isConfigured ? "checkmark.circle" : "circle.dashed")
                 .font(.caption).foregroundStyle(model.isConfigured ? .green : .secondary)
         }
@@ -77,17 +81,38 @@ public struct PopoverView: View {
 
 private struct ConnectionSettings: View {
     @ObservedObject var model: DashboardModel
-    @Environment(\.dismiss) private var dismiss
+    @State private var baseURL: String
+    @State private var username: String
+    @State private var secret: String
+    let onClose: () -> Void
+
+    init(model: DashboardModel, onClose: @escaping () -> Void) {
+        self.model = model
+        self.onClose = onClose
+        _baseURL = State(initialValue: model.baseURL)
+        _username = State(initialValue: model.username)
+        _secret = State(initialValue: model.secret)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Connection").font(.title3.bold())
             Text("Connect this menu-bar app to any compatible proxy. Values are stored locally; the secret is kept in the macOS Keychain.").font(.caption).foregroundStyle(.secondary)
-            TextField("Base URL", text: $model.baseURL).textFieldStyle(.roundedBorder)
-            TextField("Username (optional)", text: $model.username).textFieldStyle(.roundedBorder)
-            SecureField("API key or password", text: $model.secret).textFieldStyle(.roundedBorder)
-            HStack { Spacer(); Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction); Button("Save") { model.saveConnection(); dismiss() }.buttonStyle(.borderedProminent).tint(.green).keyboardShortcut(.defaultAction) }
-        }.padding(20).frame(width: 380)
+            TextField("Base URL", text: $baseURL).textFieldStyle(.roundedBorder)
+            TextField("Username (optional)", text: $username).textFieldStyle(.roundedBorder)
+            SecureField("API key or password", text: $secret).textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel", action: onClose).keyboardShortcut(.cancelAction)
+                Button("Save") {
+                    model.baseURL = baseURL
+                    model.username = username
+                    model.secret = secret
+                    model.saveConnection()
+                    onClose()
+                }.buttonStyle(.borderedProminent).tint(.green).keyboardShortcut(.defaultAction)
+            }
+        }
     }
 }
 
