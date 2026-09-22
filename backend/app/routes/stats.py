@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import and_, func
+from sqlalchemy import JSON, and_, cast, func, select
 from sqlalchemy.orm import Session
 
 from app import pricing
@@ -42,7 +42,7 @@ from app.utils.models.api.stats import (
     UserModelMix,
     UserThinkingLevelMix,
 )
-from app.utils.postgres import AccountDb, ApiKeyDb, OpenAIFallbackDb, UsageRecordDb, UserDb, get_db
+from app.utils.postgres import AccountDb, ApiKeyDb, OpenAIFallbackDb, ProxyEventDb, UsageRecordDb, UserDb, get_db
 
 # Get the logger
 logger = get_logger()
@@ -52,6 +52,28 @@ router = APIRouter(tags=["Stats"], prefix="/stats")
 
 def _tokens_sum():
     return usage.token_sum_expr()
+
+
+def _routed_model_expr():
+    """Use the proxy's routed model for presentation, falling back for legacy rows.
+
+    Usage records intentionally retain the model label reported by the provider
+    because pricing and accounting consume that value. Dashboard model analytics
+    must instead describe what the proxy routed, which is stored on the terminal
+    response event.
+    """
+    event_model = (
+        select(func.json_extract_path_text(cast(ProxyEventDb.metadata_json, JSON), "model"))
+        .where(
+            ProxyEventDb.request_id == UsageRecordDb.request_id,
+            ProxyEventDb.event_type == "response.returned",
+        )
+        .order_by(ProxyEventDb.created_at.desc())
+        .limit(1)
+        .correlate(UsageRecordDb)
+        .scalar_subquery()
+    )
+    return func.coalesce(event_model, UsageRecordDb.model)
 
 
 def _scope_clauses(
@@ -482,18 +504,22 @@ def model_mix(
     db: Session = Depends(get_db),  # noqa: B008
 ) -> ModelMixResponse:
     """Per-user model breakdown (requests, input/output tokens) over the range, busiest model first per user."""
-    join_on = and_(UsageRecordDb.user_id == UserDb.id, *_scope_clauses(rng.start, rng.end, rng.user_id, rng.model))
+    routed_model = _routed_model_expr()
+    scope = _scope_clauses(rng.start, rng.end, rng.user_id)
+    if rng.model:
+        scope.append(routed_model == rng.model.strip())
+    join_on = and_(UsageRecordDb.user_id == UserDb.id, *scope)
     query = db.query(
         UserDb.id.label("user_id"),
         UserDb.name.label("user_name"),
-        UsageRecordDb.model,
+        routed_model.label("model"),
         func.count(UsageRecordDb.id).label("requests"),
         func.coalesce(func.sum(UsageRecordDb.input_tokens), 0).label("input_tokens"),
         func.coalesce(func.sum(UsageRecordDb.output_tokens), 0).label("output_tokens"),
     ).outerjoin(UsageRecordDb, join_on)
     if rng.user_id is not None:
         query = query.filter(UserDb.id == rng.user_id)
-    rows = query.group_by(UserDb.id, UserDb.name, UsageRecordDb.model).order_by(UserDb.name, func.count(UsageRecordDb.id).desc()).all()
+    rows = query.group_by(UserDb.id, UserDb.name, routed_model).order_by(UserDb.name, func.count(UsageRecordDb.id).desc()).all()
 
     users_map: dict = {}
     for row in rows:

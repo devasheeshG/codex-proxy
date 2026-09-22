@@ -756,6 +756,52 @@ def test_events_operation_filter_separates_search_from_inference(client, admin_h
     assert [event["request_id"] for event in inference.json()["events"]] == ["req-inference-event"]
 
 
+def test_events_keep_routed_model_when_usage_reports_provider_alias(client, admin_headers, make_user):
+    from datetime import datetime, timezone
+
+    from app.utils.postgres import ProxyEventDb, UsageRecordDb, UserDb
+    from app.utils.postgres.base import SessionFactory
+
+    make_user("provider-alias-events")
+    with SessionFactory() as db:
+        user = db.query(UserDb).filter(UserDb.name == "provider-alias-events").one()
+        request_id = "req-provider-model-alias"
+        db.add(
+            ProxyEventDb(
+                id=uuid.uuid4(),
+                request_id=request_id,
+                user_id=user.id,
+                event_type="response.returned",
+                status_code=200,
+                metadata_json=json.dumps(
+                    {"model": "gpt-6-astra", "requested_model": "gpt-6-astra"},
+                    separators=(",", ":"),
+                ),
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        db.add(
+            UsageRecordDb(
+                id=uuid.uuid4(),
+                user_id=user.id,
+                model="gpt-5.6-luna",
+                input_tokens=10,
+                output_tokens=5,
+                status_code=200,
+                request_id=request_id,
+                created_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+
+    response = client.get("/api/v1/events?request_id=req-provider-model-alias", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    metadata = response.json()["events"][0]["metadata"]
+    assert metadata["model"] == "gpt-6-astra"
+    assert metadata["requested_model"] == "gpt-6-astra"
+    assert metadata["upstream_response_model"] == "gpt-5.6-luna"
+
+
 @respx.mock
 def test_proxy_compacts_without_generation_only_request_mutations(
     client,
@@ -2227,6 +2273,55 @@ def test_stats_endpoints_reflect_usage(client, admin_headers, seed_account, make
     act = client.get("/api/v1/stats/activity", headers=admin_headers).json()
     assert act["granularity"] == "day" and len(act["points"]) >= 1
     assert client.get("/api/v1/stats/hourly", headers=admin_headers).status_code == 200
+
+
+@respx.mock
+def test_model_mix_uses_routed_model_instead_of_provider_response_label(
+    client,
+    admin_headers,
+    seed_account,
+    make_user,
+):
+    from app.utils.postgres import UsageRecordDb
+    from app.utils.postgres.base import SessionFactory
+
+    seed_account("astra-account")
+    key = make_user("astra-user")
+    respx.route(host="testserver").pass_through()
+    respx.post(CODEX_RESPONSES).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "model": "gpt-5.6-luna",
+                "usage": {"input_tokens": 10, "output_tokens": 2},
+            },
+        )
+    )
+
+    proxied = client.post(
+        "/api/v1/responses",
+        headers={"Authorization": f"Bearer {key}"},
+        json={"model": "gpt-6-astra", "input": "hello"},
+    )
+    assert proxied.status_code == 200, proxied.text
+
+    with SessionFactory() as db:
+        usage_row = db.query(UsageRecordDb).one()
+        # Mirror a streaming provider that reports an internal model alias in
+        # its terminal usage payload while the proxy routed Astra.
+        usage_row.model = "gpt-5.6-luna"
+        db.commit()
+
+    response = client.get("/api/v1/stats/model-mix", headers=admin_headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["users"][0]["models"] == [
+        {
+            "model": "gpt-6-astra",
+            "requests": 1,
+            "input_tokens": 10,
+            "output_tokens": 2,
+        }
+    ]
 
 
 def test_overview_aggregates_active_pool_capacity(client, admin_headers, seed_account):

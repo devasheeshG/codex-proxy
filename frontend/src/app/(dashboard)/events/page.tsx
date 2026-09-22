@@ -57,7 +57,17 @@ const rowTone = (type: string) =>
 function displayModel(metadata: Record<string, unknown>): string {
     const effective = String(metadata.model ?? "—");
     const requested = typeof metadata.requested_model === "string" ? metadata.requested_model : "";
-    return requested && requested !== effective ? `${effective} (${requested})` : effective;
+    const reported =
+        typeof metadata.upstream_response_model === "string"
+            ? metadata.upstream_response_model
+            : "";
+    const compact = (model: string) => model.replace(/^gpt-/, "");
+    const details: string[] = [];
+    if (requested && requested !== effective) details.push(`requested ${compact(requested)}`);
+    if (reported && reported !== effective) details.push(`reported ${compact(reported)}`);
+    return details.length > 0
+        ? `${compact(effective)} (${details.join(", ")})`
+        : compact(effective);
 }
 
 function displayOperation(metadata: Record<string, unknown>): string {
@@ -522,8 +532,13 @@ export default function EventsPage() {
                                                         {users.find((u) => u.id === e.user_id)
                                                             ?.name ?? "—"}
                                                     </td>
-                                                    <td className="text-fog-300 w-48 min-w-48 px-3 py-3 text-xs break-words whitespace-normal">
-                                                        {displayModel(m)}
+                                                    <td className="text-fog-300 w-56 min-w-56 px-3 py-3 text-xs">
+                                                        <span
+                                                            className="block max-w-56 truncate"
+                                                            title={displayModel(m)}
+                                                        >
+                                                            {displayModel(m)}
+                                                        </span>
                                                     </td>
                                                     <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
                                                         {String(

@@ -94,9 +94,17 @@ def list_events(
                 metadata = {"raw": row.metadata_json}
         usage_row = usage_by_request.get(row.request_id)
         if usage_row is not None:
+            # The event metadata records the model selected by the proxy.  A
+            # provider may report a different model label in its response
+            # usage object (for example, an alias such as gpt-5.6-luna for a
+            # request routed as gpt-6-astra).  Do not overwrite the routing
+            # model with that response label: doing so made the dashboard look
+            # like the proxy had rewritten the request. Keep both values
+            # explicit instead.
+            upstream_response_model = usage_row.model
             metadata = {
                 **metadata,
-                "model": usage_row.model,
+                "upstream_response_model": upstream_response_model,
                 "input_tokens": usage_row.input_tokens,
                 "output_tokens": usage_row.output_tokens,
                 "cached_input_tokens": usage_row.cached_input_tokens,
