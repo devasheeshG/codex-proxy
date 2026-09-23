@@ -2369,6 +2369,8 @@ def test_overview_aggregates_active_pool_capacity(client, admin_headers, seed_ac
     assert overview["total_accounts"] == 6
     assert overview["active_accounts"] == 4
     assert overview["usable_accounts"] == 2
+    assert overview["five_hour_average_pct"] == 46.25
+    assert overview["weekly_average_pct"] == 12.5
     assert overview["pool_used_pct"] == 0.4625
     assert overview["pool_remaining_pct"] == 0.5375
 

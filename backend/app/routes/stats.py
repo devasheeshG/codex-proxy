@@ -162,6 +162,12 @@ def overview(
         if account.status != AccountStatus.DISABLED and account.provider_health != ProviderHealth.REAUTH_REQUIRED
     ]
     usable_accounts = [account for account in accounts if rotation.is_usable(account, now)]
+    def average_window_pct(field: str) -> float:
+        values = [getattr(account, field) for account in active_accounts if getattr(account, field) is not None]
+        return round(sum(values) / len(values) * 100.0, 2) if values else 0.0
+
+    five_hour_average_pct = average_window_pct("five_hour_used_pct")
+    weekly_average_pct = average_window_pct("weekly_used_pct")
     if active_accounts:
         pool_used_pct = round(
             sum(max(0.0, min(1.0, rotation.account_load(account))) for account in active_accounts) / len(active_accounts),
@@ -181,6 +187,8 @@ def overview(
         total_accounts=len(accounts),
         active_accounts=len(active_accounts),
         usable_accounts=len(usable_accounts),
+        five_hour_average_pct=five_hour_average_pct,
+        weekly_average_pct=weekly_average_pct,
         pool_used_pct=pool_used_pct,
         pool_remaining_pct=pool_remaining_pct,
         total_users=db.query(UserDb).count(),

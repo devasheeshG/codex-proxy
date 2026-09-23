@@ -44,7 +44,6 @@ import {
     LoadingState,
     StatusToggle,
     TextInput,
-    UsageBar,
 } from "@/components/ui";
 import {
     DualAreaChart,
@@ -562,17 +561,7 @@ export default function OverviewPage() {
 
                     <SystemTokenFlow stats={stats} rangeLabel={range.label} />
 
-                    {/* Infra strip */}
-                    <Card className="grid grid-cols-1 overflow-hidden md:grid-cols-2">
-                        <PoolCapacityCell stats={stats} />
-                        <StripCell
-                            label="Accounts"
-                            value={formatNumber(stats.active_accounts)}
-                            sub={`/ ${formatNumber(stats.total_accounts)}`}
-                            meta="authenticated and enabled"
-                            divided
-                        />
-                    </Card>
+                    <QuotaAverages stats={stats} />
 
                     {modelMix && modelMix.users.some((user) => user.total_requests > 0) ? (
                         <UserInsightsCard modelData={modelMix} thinkingData={thinkingLevelMix} />
@@ -875,63 +864,61 @@ function SystemTokenFlow({ stats, rangeLabel }: { stats: OverviewStats; rangeLab
     );
 }
 
-// One cell of the account/user/key inventory strip.
-function StripCell({
-    label,
-    value,
-    sub,
-    meta,
-    divided,
-}: {
-    label: string;
-    value: string;
-    sub?: string;
-    meta: string;
-    divided?: boolean;
-}) {
+function QuotaAverages({ stats }: { stats: OverviewStats }) {
+    const accountLabel = `${formatNumber(stats.active_accounts)} / ${formatNumber(stats.total_accounts)} accounts`;
     return (
-        <div
-            className={`p-5 ${divided ? "border-ink-700 border-t md:border-t-0 md:border-l" : ""}`}
-        >
-            <div className="text-fog-400 text-[11px] font-medium tracking-wider uppercase">
-                {label}
-            </div>
-            <div className="text-fog-100 mt-2 font-mono text-2xl tabular-nums">
-                {value}
-                {sub ? <span className="text-fog-400 text-base"> {sub}</span> : null}
-            </div>
-            <div className="text-fog-400 mt-1.5 text-xs">{meta}</div>
-        </div>
+        <Card className="grid grid-cols-1 overflow-hidden md:grid-cols-2">
+            <QuotaAverageCell
+                label="Average 5-hour limit"
+                usedPct={stats.five_hour_average_pct}
+                accountLabel={accountLabel}
+            />
+            <QuotaAverageCell
+                label="Average weekly limit"
+                usedPct={stats.weekly_average_pct}
+                accountLabel={accountLabel}
+                divided
+            />
+        </Card>
     );
 }
 
-function PoolCapacityCell({ stats }: { stats: OverviewStats }) {
-    const hasCapacity = stats.active_accounts > 0;
-    const used = hasCapacity ? stats.pool_used_pct : 0;
-
+function QuotaAverageCell({
+    label,
+    usedPct,
+    accountLabel,
+    divided = false,
+}: {
+    label: string;
+    usedPct: number;
+    accountLabel: string;
+    divided?: boolean;
+}) {
+    const percentage = Math.max(0, Math.min(100, usedPct));
     return (
-        <div className="p-5">
+        <div className={`p-5 sm:p-6 ${divided ? "border-ink-700 border-t md:border-t-0 md:border-l" : ""}`}>
             <div className="text-fog-400 text-[11px] font-medium tracking-wider uppercase">
-                Proxy capacity
+                {label}
             </div>
-            <div className="mt-2.5">
-                {hasCapacity ? (
-                    <UsageBar label="Used" fraction={used} />
-                ) : (
-                    <div
-                        className="bg-ink-700 h-1.5 w-full overflow-hidden rounded-full"
-                        role="progressbar"
-                        aria-label="Active proxy capacity used"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={0}
-                    />
-                )}
+            <div className="text-fog-100 mt-4 font-mono text-4xl font-semibold tabular-nums">
+                {percentage.toFixed(1)}%
+            </div>
+            <div className="text-fog-400 mt-1 text-xs">average used</div>
+            <div
+                className="bg-ink-700 mt-5 h-2 overflow-hidden rounded-full"
+                role="progressbar"
+                aria-label={`${label} average used`}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={percentage}
+            >
+                <div
+                    className="bg-brand-500 h-full rounded-full transition-[width] duration-500"
+                    style={{ width: `${percentage}%` }}
+                />
             </div>
             <div className="text-fog-400 mt-2 text-xs">
-                {hasCapacity
-                    ? `Across ${formatNumber(stats.active_accounts)} authenticated, enabled ${stats.active_accounts === 1 ? "account" : "accounts"}`
-                    : "No authenticated, enabled accounts"}
+                {accountLabel} authenticated and enabled
             </div>
         </div>
     );

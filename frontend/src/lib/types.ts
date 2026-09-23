@@ -37,6 +37,8 @@ export interface OverviewStats {
     total_accounts: number;
     active_accounts: number;
     usable_accounts: number;
+    five_hour_average_pct: number;
+    weekly_average_pct: number;
     pool_used_pct: number;
     pool_remaining_pct: number;
     total_users: number;
