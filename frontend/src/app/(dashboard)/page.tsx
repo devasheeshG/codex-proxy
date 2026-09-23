@@ -569,7 +569,7 @@ export default function OverviewPage() {
                             label="Accounts"
                             value={formatNumber(stats.active_accounts)}
                             sub={`/ ${formatNumber(stats.total_accounts)}`}
-                            meta="active in rotation"
+                            meta="authenticated and enabled"
                             divided
                         />
                     </Card>
@@ -930,8 +930,8 @@ function PoolCapacityCell({ stats }: { stats: OverviewStats }) {
             </div>
             <div className="text-fog-400 mt-2 text-xs">
                 {hasCapacity
-                    ? `Across ${formatNumber(stats.active_accounts)} active ${stats.active_accounts === 1 ? "account" : "accounts"}`
-                    : "No active accounts in the pool"}
+                    ? `Across ${formatNumber(stats.active_accounts)} authenticated, enabled ${stats.active_accounts === 1 ? "account" : "accounts"}`
+                    : "No authenticated, enabled accounts"}
             </div>
         </div>
     );

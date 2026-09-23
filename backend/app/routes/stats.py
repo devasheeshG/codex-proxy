@@ -153,10 +153,13 @@ def overview(
         )
 
     accounts = db.query(AccountDb).all()
-    # Keep this definition in sync with the Accounts tab's Active filter:
-    # active status, excluding accounts that require re-authentication.
+    # Dashboard inventory counts every enabled account with valid authentication,
+    # including accounts in a temporary cooldown. Immediate routing eligibility is
+    # reported separately through usable_accounts.
     active_accounts = [
-        account for account in accounts if account.status == AccountStatus.ACTIVE and account.provider_health != ProviderHealth.REAUTH_REQUIRED
+        account
+        for account in accounts
+        if account.status != AccountStatus.DISABLED and account.provider_health != ProviderHealth.REAUTH_REQUIRED
     ]
     usable_accounts = [account for account in accounts if rotation.is_usable(account, now)]
     if active_accounts:
