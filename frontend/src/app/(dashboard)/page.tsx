@@ -4,7 +4,7 @@
 // Overview / analytics. A date range drives the whole page:
 //   - Hero band: API-equivalent value delivered + tokens/requests, with the
 //     activity series (auto hourly/daily) pulled in alongside.
-//   - Infra strip: account / user / key inventory (not range-dependent).
+//   - Infra strip: pool load and account inventory (not range-dependent).
 //   - Two-up: peak hours + top users.
 //   - Recent requests: paginated log for the range.
 // Auto-refresh and the range selection both re-fetch every panel.
@@ -563,26 +563,13 @@ export default function OverviewPage() {
                     <SystemTokenFlow stats={stats} rangeLabel={range.label} />
 
                     {/* Infra strip */}
-                    <Card className="grid grid-cols-1 overflow-hidden md:grid-cols-4">
+                    <Card className="grid grid-cols-1 overflow-hidden md:grid-cols-2">
                         <PoolCapacityCell stats={stats} />
                         <StripCell
                             label="Accounts"
                             value={formatNumber(stats.active_accounts)}
                             sub={`/ ${formatNumber(stats.total_accounts)}`}
                             meta="active in rotation"
-                            divided
-                        />
-                        <StripCell
-                            label="Users"
-                            value={formatNumber(stats.active_users)}
-                            sub={`/ ${formatNumber(stats.total_users)}`}
-                            meta="active key-holders"
-                            divided
-                        />
-                        <StripCell
-                            label="API keys"
-                            value={formatNumber(stats.total_keys)}
-                            meta="across all users"
                             divided
                         />
                     </Card>
