@@ -1303,6 +1303,12 @@ async def proxy_search(
                 is_internal = _is_upstream_internal_auth_failure(candidate)
                 await candidate.aclose()
                 if is_internal:
+                    logger.warning(
+                        "Pooled account %s received upstream-internal 401 on search; treating as transient",
+                        account.label,
+                    )
+                    transient_seconds = max(1, min(settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS, account.cooldown_seconds))
+                    rotation.mark_cooldown(db, account, transient_seconds)
                     _emit_event(
                         request,
                         "account.transient_error",
@@ -1310,9 +1316,10 @@ async def proxy_search(
                         api_key_id=key.id,
                         account_id=account.id,
                         status_code=401,
-                        message="Upstream-internal 401 on search",
+                        message="Upstream-internal 401 on search: Codex gateway accepted the token but its backend key was rejected",
                         metadata={"failure_class": "upstream_internal_auth"},
                     )
+                    db.commit()
                     excluded.add(account.id)
                     continue
                 candidate = await _send_account_candidate(
@@ -1327,6 +1334,12 @@ async def proxy_search(
                     is_internal_retry = _is_upstream_internal_auth_failure(candidate)
                     await candidate.aclose()
                     if is_internal_retry:
+                        logger.warning(
+                            "Pooled account %s received upstream-internal 401 on search after force-refresh; treating as transient",
+                            account.label,
+                        )
+                        transient_seconds = max(1, min(settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS, account.cooldown_seconds))
+                        rotation.mark_cooldown(db, account, transient_seconds)
                         _emit_event(
                             request,
                             "account.transient_error",
@@ -1334,9 +1347,10 @@ async def proxy_search(
                             api_key_id=key.id,
                             account_id=account.id,
                             status_code=401,
-                            message="Upstream-internal 401 on search after force-refresh",
+                            message="Upstream-internal 401 on search after force-refresh; treating as transient",
                             metadata={"failure_class": "upstream_internal_auth"},
                         )
+                        db.commit()
                         excluded.add(account.id)
                         continue
                     provider_health.persist_failure(
@@ -1820,11 +1834,13 @@ async def proxy_responses(
                 is_internal = _is_upstream_internal_auth_failure(candidate)
                 await candidate.aclose()
                 if is_internal:
-                    # The Codex gateway authenticated our token but its own
-                    # backend service key was rejected.  Skip this account for
-                    # the current request without any cooldown so the proxy
-                    # reaches fallback providers quickly instead of burning
-                    # minutes cycling through cooldown timers.
+                    logger.warning(
+                        "Pooled account %s received an upstream-internal 401 (Codex gateway authenticated the token "
+                        "but its own backend key was rejected); treating as transient",
+                        account.label,
+                    )
+                    transient_seconds = max(1, min(settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS, account.cooldown_seconds))
+                    rotation.mark_cooldown(db, account, transient_seconds)
                     _emit_event(
                         request,
                         "account.transient_error",
@@ -1835,6 +1851,7 @@ async def proxy_responses(
                         message="Upstream-internal 401: Codex gateway accepted the token but its backend key was rejected",
                         metadata={"failure_class": "upstream_internal_auth"},
                     )
+                    db.commit()
                     excluded.add(account.id)
                     continue
                 candidate = await _send_account_candidate(
@@ -1849,6 +1866,12 @@ async def proxy_responses(
                     is_internal_retry = _is_upstream_internal_auth_failure(candidate)
                     await candidate.aclose()
                     if is_internal_retry:
+                        logger.warning(
+                            "Pooled account %s received upstream-internal 401 after force-refresh; treating as transient",
+                            account.label,
+                        )
+                        transient_seconds = max(1, min(settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS, account.cooldown_seconds))
+                        rotation.mark_cooldown(db, account, transient_seconds)
                         _emit_event(
                             request,
                             "account.transient_error",
@@ -1856,9 +1879,10 @@ async def proxy_responses(
                             api_key_id=key.id,
                             account_id=account.id,
                             status_code=401,
-                            message="Upstream-internal 401 after force-refresh",
+                            message="Upstream-internal 401 after force-refresh; treating as transient",
                             metadata={"failure_class": "upstream_internal_auth"},
                         )
+                        db.commit()
                         excluded.add(account.id)
                         continue
                     provider_health.persist_failure(db, account.id, provider_health.reauthentication_error())
