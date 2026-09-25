@@ -3,8 +3,9 @@
 #              on a fixed interval, so the dashboard stays current even for idle accounts.
 #              Run with: `python -m app.scripts.quota_refresher`.
 
+import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app import config
 from app.logger import configure_logging, get_logger
@@ -17,6 +18,29 @@ logger = get_logger()
 
 # Get the settings
 settings = config.get_settings()
+
+
+def _refresh_model_catalog_if_stale(account: AccountDb, access_token: str, *, egress_target: egress.EgressTarget) -> bool:
+    """Refresh account capabilities periodically without probing on every quota cycle."""
+    now = datetime.now(timezone.utc)
+    refreshed_at = account.model_catalog_refreshed_at
+    if refreshed_at is not None:
+        if refreshed_at.tzinfo is None:
+            refreshed_at = refreshed_at.replace(tzinfo=timezone.utc)
+        max_age = timedelta(seconds=max(settings.MODEL_CATALOG_REFRESH_INTERVAL_SECONDS, 0))
+        if refreshed_at > now - max_age:
+            return False
+
+    catalog = oauth.fetch_model_catalog(
+        access_token,
+        account.chatgpt_account_id,
+        client_version=settings.CODEX_CLIENT_VERSION,
+        is_fedramp=bool(account.chatgpt_account_is_fedramp),
+        **egress.provider_call_kwargs(egress_target),
+    )
+    account.model_catalog_json = json.dumps(catalog["models"], separators=(",", ":"))
+    account.model_catalog_refreshed_at = now
+    return True
 
 
 def refresh_once() -> None:
@@ -41,6 +65,18 @@ def refresh_once() -> None:
                         **egress.provider_call_kwargs(target),
                     ),
                 )
+                try:
+                    if _refresh_model_catalog_if_stale(account, access_token, egress_target=target):
+                        logger.info("Refreshed model catalog for account '%s'", account.label)
+                except Exception as exc:  # noqa: BLE001
+                    # A stale catalog should not turn a successful quota probe
+                    # into a provider-health failure. Routing keeps the last
+                    # known capabilities until a later cycle succeeds.
+                    logger.warning(
+                        "Model catalog refresh failed for account '%s' (error_type=%s)",
+                        account.label,
+                        type(exc).__name__,
+                    )
                 if (account.weekly_used_pct or 0) >= 1.0:
                     redeemed = rotation.auto_redeem_weekly_reset(
                         db,

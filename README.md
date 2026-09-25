@@ -115,6 +115,8 @@ Codex catalog is:
 | `gpt-5.6-sol` | Codex GPT 5.6 family |
 | `gpt-5.6-terra` | Codex GPT 5.6 family |
 | `gpt-6-astra` | Codex GPT 6 family |
+| `gpt-6-sol` | Codex GPT 6 family |
+| `gpt-6-luna` | Codex GPT 6 family |
 | `codex-auto-review` | Codex browser auto-review model |
 
 Model rewrites are shown in events as `target (requested)`, for example

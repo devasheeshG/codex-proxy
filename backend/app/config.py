@@ -23,7 +23,7 @@ UPSTREAM_CODEX_BASE_URL = f"{CHATGPT_BASE_URL}/codex"
 CODEX_USER_AGENT = "codex-proxy/0.1"
 # The Codex model catalog requires this query parameter. Keep it configurable
 # so deployments can advance it without a code change when the CLI updates.
-DEFAULT_CODEX_CLIENT_VERSION = "0.144.5"
+DEFAULT_CODEX_CLIENT_VERSION = "0.157.0"
 
 # Codex's official device-code login flow. Device authorization avoids requiring
 # the proxy host to receive a browser callback and works for remote deployments.
@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 60 * 12
 
     QUOTA_REFRESH_INTERVAL_SECONDS: int = 60
+    MODEL_CATALOG_REFRESH_INTERVAL_SECONDS: int = 60 * 60 * 6
     # Warm-up is part of the normal pool-management loop. Deployments can
     # explicitly disable synthetic traffic with WARMUP_ENABLED=false.
     WARMUP_ENABLED: bool = True

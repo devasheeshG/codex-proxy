@@ -1,6 +1,7 @@
 # Path: tests/test_quota_refresher.py
-# Description: Regression coverage for automatic weekly-reset redemption during background quota refreshes.
+# Description: Regression coverage for background quota, reset-credit, and model-catalog refreshes.
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from app.scripts import quota_refresher
@@ -29,6 +30,7 @@ def test_quota_refresher_redeems_an_exhausted_weekly_window(seed_account, monkey
     usage_results = iter((exhausted, exhausted, recovered))
     consumed = []
     monkeypatch.setattr(quota_refresher.oauth, "fetch_usage", lambda *_args: next(usage_results))
+    monkeypatch.setattr(quota_refresher.oauth, "fetch_model_catalog", lambda *_args, **_kwargs: {"models": []})
     monkeypatch.setattr(
         quota_refresher.oauth,
         "list_reset_credits",
@@ -58,3 +60,37 @@ def test_quota_refresher_redeems_an_exhausted_weekly_window(seed_account, monkey
         account = db.get(AccountDb, account_id)
         assert account.weekly_used_pct == 0.0
         assert account.reset_credits_available == 0
+
+
+def test_quota_refresher_persists_stale_model_catalog(seed_account, monkeypatch):
+    account_id = seed_account("catalog-refresh")
+    usage = {
+        "five_hour": {"utilization": 0.1},
+        "weekly": {"utilization": 0.2},
+        "monthly": None,
+        "reset_credits_available": 0,
+        "limit_reached": False,
+    }
+    monkeypatch.setattr(quota_refresher.oauth, "fetch_usage", lambda *_args, **_kwargs: usage)
+    monkeypatch.setattr(
+        quota_refresher.oauth,
+        "fetch_model_catalog",
+        lambda *_args, **_kwargs: {
+            "models": [
+                {"slug": "gpt-6-astra"},
+                {"slug": "gpt-6-sol"},
+                {"slug": "gpt-6-luna"},
+            ]
+        },
+    )
+
+    quota_refresher.refresh_once()
+
+    with SessionFactory() as db:
+        account = db.get(AccountDb, account_id)
+        assert json.loads(account.model_catalog_json) == [
+            {"slug": "gpt-6-astra"},
+            {"slug": "gpt-6-sol"},
+            {"slug": "gpt-6-luna"},
+        ]
+        assert account.model_catalog_refreshed_at is not None

@@ -105,6 +105,8 @@ def test_user_request_policy_can_be_customized(client, admin_headers):
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "codex-auto-review",
     ]
 
@@ -177,7 +179,7 @@ def test_user_budgets_and_model_overrides_crud(client, admin_headers):
 @respx.mock
 def test_refresh_model_options_returns_fixed_catalog_without_upstream_calls(client, admin_headers, seed_account):
     seed_account("catalog-refresh")
-    upstream = respx.get(CODEX_MODELS, params={"client_version": "0.144.5"}).mock(
+    upstream = respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(
         return_value=httpx.Response(200, json={"models": [{"slug": "unexpected"}]})
     )
 
@@ -189,6 +191,8 @@ def test_refresh_model_options_returns_fixed_catalog_without_upstream_calls(clie
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "codex-auto-review",
     ]
     assert not upstream.called
@@ -1110,14 +1114,14 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
     key = make_user("catalog-user")
 
     respx.route(host="testserver").pass_through()
-    route = respx.get(CODEX_MODELS, params={"client_version": "0.144.5"}).mock(
+    route = respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(
         return_value=httpx.Response(200, json={"models": [{"slug": "gpt-5.4"}]})
     )
 
     response = client.get(
         "/api/v1/models",
         headers={"Authorization": f"Bearer {key}"},
-        params={"client_version": "0.144.5"},
+        params={"client_version": "0.157.0"},
     )
     assert response.status_code == 200
     assert [model["slug"] for model in response.json()["models"]] == [
@@ -1125,6 +1129,8 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "codex-auto-review",
     ]
     assert not route.called
@@ -1143,7 +1149,7 @@ def test_model_catalog_does_not_probe_pooled_accounts(client, seed_account, make
             models.append({"slug": "gpt-5.6-sol"})
         return httpx.Response(200, json={"models": models})
 
-    route = respx.get(CODEX_MODELS, params={"client_version": "0.144.5"}).mock(side_effect=catalog)
+    route = respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(side_effect=catalog)
     response = client.get("/api/v1/models", headers={"Authorization": f"Bearer {key}"})
     assert response.status_code == 200
     assert {model["id"] for model in response.json()["data"]} == {
@@ -1151,6 +1157,8 @@ def test_model_catalog_does_not_probe_pooled_accounts(client, seed_account, make
         "gpt-5.6-sol",
         "gpt-5.6-terra",
         "gpt-6-astra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "codex-auto-review",
     }
     assert route.call_count == 0
@@ -1167,7 +1175,7 @@ def test_model_catalog_is_filtered_by_user_allowlist(client, admin_headers, seed
     user_id = created.json()["user"]["id"]
     key = client.post(f"/api/v1/users/{user_id}/keys", headers=admin_headers, json={"label": "test-key"}).json()["secret"]
     respx.route(host="testserver").pass_through()
-    respx.get(CODEX_MODELS, params={"client_version": "0.144.5"}).mock(
+    respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(
         return_value=httpx.Response(
             200,
             json={"models": [{"slug": "gpt-5.6-luna"}, {"slug": "gpt-5.6-sol"}]},
@@ -1251,7 +1259,7 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
     key = make_user("catalog-sdk-user")
 
     respx.route(host="testserver").pass_through()
-    route = respx.get(CODEX_MODELS, params={"client_version": "0.144.5"}).mock(
+    route = respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(
         return_value=httpx.Response(
             200,
             json={
@@ -1275,6 +1283,8 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
             {"id": "gpt-5.6-sol", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-5.6-terra", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-astra", "object": "model", "created": 0, "owned_by": "openai"},
+            {"id": "gpt-6-sol", "object": "model", "created": 0, "owned_by": "openai"},
+            {"id": "gpt-6-luna", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "codex-auto-review", "object": "model", "created": 0, "owned_by": "openai"},
         ],
     }

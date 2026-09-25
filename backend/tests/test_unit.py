@@ -372,13 +372,22 @@ def test_pricing_separates_fresh_cache_read_and_cache_write_input():
     assert value == pytest.approx(expected)
 
 
-def test_pricing_supports_gpt_6_astra_standard_short_context_rates():
+@pytest.mark.parametrize(
+    ("model", "rates"),
+    [
+        ("gpt-6-astra", (10.0, 1.0, 12.5, 50.0)),
+        ("gpt-6-sol", (2.0, 0.2, 2.5, 10.0)),
+        ("gpt-6-luna", (0.1, 0.01, 0.125, 0.5)),
+    ],
+)
+def test_pricing_supports_gpt_6_standard_short_context_rates(model, rates):
     value = pricing.cost_usd(
-        "gpt-6-astra",
+        model,
         input_tokens=100,
         output_tokens=10,
         cached_input_tokens=20,
         cache_write_tokens=30,
     )
-    expected = (50 * 10.0 + 20 * 1.0 + 30 * 12.5 + 10 * 50.0) / 1_000_000
+    input_rate, cached_rate, cache_write_rate, output_rate = rates
+    expected = (50 * input_rate + 20 * cached_rate + 30 * cache_write_rate + 10 * output_rate) / 1_000_000
     assert value == pytest.approx(expected)

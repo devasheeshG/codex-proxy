@@ -15,6 +15,8 @@ DEFAULT_MODEL_IDS: tuple[str, ...] = (
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
     "codex-auto-review",
 )
 
