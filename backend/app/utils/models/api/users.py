@@ -42,6 +42,8 @@ def _normalize_model_overrides(values):
     invalid = sorted((set(normalized) | set(normalized.values())) - set(configured_model_ids()))
     if invalid:
         raise ValueError(f"Unknown model IDs: {', '.join(invalid)}")
+    if any(target.startswith("gpt-5.6-") for target in normalized.values()):
+        raise ValueError("GPT-5.6 aliases cannot be upstream rewrite targets")
     return normalized
 
 
@@ -216,7 +218,14 @@ class CreateUserRequest(BaseModel):
         min_length=1,
     )
     allowed_models: Optional[List[str]] = Field(default=None, min_length=1)
-    model_overrides: Dict[str, str] = Field(default_factory=lambda: {"gpt-6-astra": "gpt-6-sol"})
+    model_overrides: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "gpt-5.6-luna": "gpt-6-luna",
+            "gpt-5.6-sol": "gpt-6-sol",
+            "gpt-5.6-terra": "gpt-6-sol",
+            "gpt-6-astra": "gpt-6-sol",
+        }
+    )
     preset_id: Optional[uuid.UUID] = None
     model_reasoning_levels: Dict[str, List[request_policy.ReasoningLevel]] = Field(default_factory=dict)
     model_request_modes: Dict[str, List[request_policy.RequestMode]] = Field(default_factory=dict)
@@ -255,6 +264,8 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     # Omitted fields are left unchanged. For the numeric limits, send 0 to clear a limit (unlimited).
     name: Optional[str] = None
+    preset_id: Optional[uuid.UUID] = None
+    clear_preset_overrides: List[str] = Field(default_factory=list)
     active: Optional[bool] = None
     priority: Optional[int] = Field(default=None, ge=1, le=1000)
     fallback_enabled: Optional[bool] = None

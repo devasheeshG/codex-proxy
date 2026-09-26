@@ -164,6 +164,10 @@ is currently available (including an eligible limit reset or reauthentication).
 Bulk actions can assign a priority to selected accounts without changing any
 other card setting.
 
+Automatic weekly limit-reset redemption is an opt-in account setting. It is
+disabled by default, including for accounts created before this setting was
+introduced; administrators can enable it in each account's Edit dialog.
+
 ### Users
 
 ![Users dashboard](docs/screenshots/users.png)
@@ -181,6 +185,9 @@ user; editing it updates inherited fields across its users. A user can override
 individual policy fields, and each override can be reset to the preset. New and
 upgraded installations create a **Current configuration** preset and assign
 existing users without changing their effective policies.
+The Edit User dialog places preset selection after usage budgets. Preset-owned
+model access and rewrites are managed in the preset; user-specific thinking
+and request-mode overrides appear only when explicitly enabled.
 
 ### Events and request history
 
@@ -196,6 +203,8 @@ request outcome. Request IDs are intentionally not shown in the normal table.
 Successful and failed requests are both retained. When request archiving is
 enabled, an event can open the exact captured request and response body from
 S3-compatible storage; authorization and cookie headers are never archived.
+Web-search requests still generate routing events, but their bodies are not
+archived, so those events do not offer a capture viewer.
 
 #### Event types and routing outcomes
 

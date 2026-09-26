@@ -1304,6 +1304,9 @@ function EditAccountModal({
     const [authenticatedOverride, setAuthenticatedOverride] = useState(
         account.authenticated_override,
     );
+    const [autoLimitResetEnabled, setAutoLimitResetEnabled] = useState(
+        account.auto_limit_reset_enabled,
+    );
     const [fiveHourThreshold, setFiveHourThreshold] = useState(
         String(account.five_hour_rotation_threshold),
     );
@@ -1328,6 +1331,7 @@ function EditAccountModal({
                 label: label.trim(),
                 workspace_name: isTeamPlan(account.tier) ? workspaceName.trim() || null : undefined,
                 authenticated_override: authenticatedOverride,
+                auto_limit_reset_enabled: autoLimitResetEnabled,
                 five_hour_rotation_threshold: optionalNumber(fiveHourThreshold),
                 weekly_rotation_threshold: optionalNumber(weeklyThreshold),
                 cooldown_seconds: optionalNumber(cooldown),
@@ -1385,6 +1389,22 @@ function EditAccountModal({
                         />
                     </Field>
                 ) : null}
+                <Field
+                    label="Automatically redeem limit resets"
+                    hint="When enabled, the proxy may redeem an available provider reset credit after the weekly window is exhausted. Disabled by default."
+                >
+                    <label className="border-fog-700 bg-ink-900 flex cursor-pointer items-center justify-between rounded-md border px-3 py-2">
+                        <span className="text-fog-200 text-sm">
+                            Auto-claim weekly limit reset credits
+                        </span>
+                        <input
+                            type="checkbox"
+                            checked={autoLimitResetEnabled}
+                            onChange={(event) => setAutoLimitResetEnabled(event.target.checked)}
+                            className="accent-brand-500 h-4 w-4"
+                        />
+                    </label>
+                </Field>
                 <Field
                     label="5-hour rotation threshold"
                     hint="Fraction from 0 to 1; 0.95 means 95%."

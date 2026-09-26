@@ -566,7 +566,8 @@ export default function EventsPage() {
                                                     <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">
                                                         <div className="flex flex-wrap items-center gap-2">
                                                             <span>{e.event_type}</span>
-                                                            {(e.event_type === "request.received" ||
+                                                            {displayOperation(m) !== "Web search" &&
+                                                            (e.event_type === "request.received" ||
                                                                 e.event_type ===
                                                                     "response.returned") &&
                                                             e.archive_hot !== false &&

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Plus, SlidersHorizontal, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { Preset, ReasoningLevel, RequestMode } from "@/lib/types";
-import { Button, Field, Modal, TextInput } from "@/components/ui";
+import { Button, Field, Modal, SelectMenu, TextInput } from "@/components/ui";
 
 const LEVELS: ReasoningLevel[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 const MODES: RequestMode[] = ["standard", "fast", "ultrafast"];
@@ -23,17 +23,20 @@ function Chips<T extends string>({
     onChange: (values: T[]) => void;
 }) {
     return (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {values.map((value) => (
-                <button
+                <label
                     key={value}
-                    type="button"
-                    onClick={() => onChange(toggle(selected, value))}
-                    aria-pressed={selected.includes(value)}
-                    className={`rounded-md border px-3 py-2 text-xs transition-colors ${selected.includes(value) ? "border-brand-500/60 bg-brand-500/15 text-brand-300" : "border-ink-700 bg-ink-900 text-fog-400 hover:text-fog-100"}`}
+                    className={`border-ink-700 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs capitalize transition-colors ${selected.includes(value) ? "bg-brand-500/15 border-brand-500/60 text-brand-300" : "bg-ink-900 text-fog-400 hover:border-ink-500 hover:text-fog-100"}`}
                 >
-                    {value}
-                </button>
+                    <input
+                        type="checkbox"
+                        checked={selected.includes(value)}
+                        onChange={() => onChange(toggle(selected, value))}
+                        className="accent-brand-500 h-4 w-4"
+                    />
+                    {value === "ultrafast" ? "UltraFast" : value}
+                </label>
             ))}
         </div>
     );
@@ -45,48 +48,54 @@ export function ModelRulesEditor({
     modes,
     onLevels,
     onModes,
+    showLevels = true,
+    showModes = true,
 }: {
     models: string[];
     levels: Record<string, ReasoningLevel[]>;
     modes: Record<string, RequestMode[]>;
     onLevels: (value: Record<string, ReasoningLevel[]>) => void;
     onModes: (value: Record<string, RequestMode[]>) => void;
+    showLevels?: boolean;
+    showModes?: boolean;
 }) {
     const [newModel, setNewModel] = useState("");
-    const configured = [...new Set([...Object.keys(levels), ...Object.keys(modes)])];
+    const configured = [
+        ...new Set([
+            ...(showLevels ? Object.keys(levels) : []),
+            ...(showModes ? Object.keys(modes) : []),
+        ]),
+    ];
     const remove = (model: string) => {
         const nextLevels = { ...levels };
         const nextModes = { ...modes };
-        delete nextLevels[model];
-        delete nextModes[model];
+        if (showLevels) delete nextLevels[model];
+        if (showModes) delete nextModes[model];
         onLevels(nextLevels);
         onModes(nextModes);
     };
     return (
         <div className="space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row">
-                <select
-                    aria-label="Model for a new per-model rule"
+                <SelectMenu
                     value={newModel}
-                    onChange={(event) => setNewModel(event.target.value)}
-                    className="border-ink-700 bg-ink-900 text-fog-100 min-w-0 flex-1 rounded-md border px-3 py-2 text-sm"
-                >
-                    <option value="">Choose a model…</option>
-                    {models
-                        .filter((model) => !configured.includes(model))
-                        .map((model) => (
-                            <option key={model} value={model}>
-                                {model}
-                            </option>
-                        ))}
-                </select>
+                    onChange={setNewModel}
+                    ariaLabel="Model for a new per-model rule"
+                    className="min-w-0 flex-1"
+                    options={[
+                        { value: "", label: "Choose a model…" },
+                        ...models
+                            .filter((model) => !configured.includes(model))
+                            .map((model) => ({ value: model, label: model })),
+                    ]}
+                />
                 <Button
                     type="button"
                     variant="ghost"
                     disabled={!newModel}
                     onClick={() => {
-                        onLevels({ ...levels, [newModel]: [...LEVELS] });
-                        onModes({ ...modes, [newModel]: [...MODES] });
+                        if (showLevels) onLevels({ ...levels, [newModel]: [...LEVELS] });
+                        if (showModes) onModes({ ...modes, [newModel]: [...MODES] });
                         setNewModel("");
                     }}
                 >
@@ -104,26 +113,30 @@ export function ModelRulesEditor({
                             type="button"
                             onClick={() => remove(model)}
                             aria-label={`Remove ${model} rule`}
-                            className="text-fog-400 hover:text-bad-500 rounded p-1"
+                            className="text-bad-500 hover:bg-bad-500/10 rounded p-1 transition-colors"
                         >
                             <Trash2 size={15} />
                         </button>
                     </div>
                     <div className="space-y-3">
-                        <Field label="Thinking levels">
-                            <Chips
-                                values={LEVELS}
-                                selected={levels[model] ?? LEVELS}
-                                onChange={(items) => onLevels({ ...levels, [model]: items })}
-                            />
-                        </Field>
-                        <Field label="Request modes">
-                            <Chips
-                                values={MODES}
-                                selected={modes[model] ?? MODES}
-                                onChange={(items) => onModes({ ...modes, [model]: items })}
-                            />
-                        </Field>
+                        {showLevels && (
+                            <Field label="Thinking levels">
+                                <Chips
+                                    values={LEVELS}
+                                    selected={levels[model] ?? LEVELS}
+                                    onChange={(items) => onLevels({ ...levels, [model]: items })}
+                                />
+                            </Field>
+                        )}
+                        {showModes && (
+                            <Field label="Request modes">
+                                <Chips
+                                    values={MODES}
+                                    selected={modes[model] ?? MODES}
+                                    onChange={(items) => onModes({ ...modes, [model]: items })}
+                                />
+                            </Field>
+                        )}
                     </div>
                 </div>
             ))}
@@ -158,6 +171,11 @@ function PresetModal({
     const [modelModes, setModelModes] = useState<Record<string, RequestMode[]>>(
         preset?.model_request_modes ?? {},
     );
+    const [useGlobalThinking, setUseGlobalThinking] = useState(
+        !preset || Object.keys(preset.model_reasoning_levels).length === 0,
+    );
+    const [previousGlobalLevels, setPreviousGlobalLevels] = useState<ReasoningLevel[]>(levels);
+    const selectedModels = allModels ? models : allowedModels;
     const [source, setSource] = useState("");
     const [target, setTarget] = useState("");
     const [busy, setBusy] = useState(false);
@@ -173,7 +191,14 @@ function PresetModal({
                 allowed_reasoning_levels: levels,
                 allowed_request_modes: modes,
                 model_overrides: redirects,
-                model_reasoning_levels: modelLevels,
+                model_reasoning_levels: useGlobalThinking
+                    ? {}
+                    : Object.fromEntries(
+                          selectedModels.map((model) => [
+                              model,
+                              modelLevels[model] ?? previousGlobalLevels,
+                          ]),
+                      ),
                 model_request_modes: modelModes,
             };
             if (preset) await api.updatePreset(preset.id, payload);
@@ -201,94 +226,169 @@ function PresetModal({
                         placeholder="e.g. Standard access"
                     />
                 </Field>
-                <div className="border-ink-700 rounded-lg border p-3 sm:p-4">
-                    <label className="text-fog-200 flex items-center gap-2 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={allModels}
-                            onChange={(event) => setAllModels(event.target.checked)}
-                        />
-                        Allow every configured model
-                    </label>
-                    {!allModels && (
-                        <div className="mt-3">
-                            <Chips
-                                values={models}
-                                selected={allowedModels}
-                                onChange={setAllowedModels}
+                <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
+                    <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
+                        Model access
+                    </summary>
+                    <div className="border-ink-700 space-y-3 border-t p-4">
+                        <label className="text-fog-200 flex items-center gap-2 text-sm">
+                            <input
+                                type="checkbox"
+                                checked={allModels}
+                                onChange={(event) => setAllModels(event.target.checked)}
                             />
-                        </div>
-                    )}
-                </div>
-                <Field label="Allowed thinking levels">
-                    <Chips values={LEVELS} selected={levels} onChange={setLevels} />
-                </Field>
-                <Field label="Allowed request modes">
-                    <Chips values={MODES} selected={modes} onChange={setModes} />
-                </Field>
-                <div className="space-y-2">
-                    <div className="text-fog-200 text-sm font-medium">Model rewrites</div>
-                    <p className="text-fog-400 text-xs">
-                        Use exact model IDs. The client-facing source must also be allowed above.
-                    </p>
-                    {Object.entries(redirects).map(([from, to]) => (
-                        <div
-                            key={from}
-                            className="border-ink-700 flex items-center gap-2 rounded border p-2 text-xs"
-                        >
-                            <code className="min-w-0 flex-1 break-all">
-                                {from} → {to}
-                            </code>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const next = { ...redirects };
-                                    delete next[from];
-                                    setRedirects(next);
-                                }}
-                                aria-label={`Remove ${from} rewrite`}
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                    ))}
-                    <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-                        <select
-                            aria-label="Rewrite source"
-                            value={source}
-                            onChange={(event) => setSource(event.target.value)}
-                            className="border-ink-700 bg-ink-900 rounded border px-2 py-2 text-sm"
-                        >
-                            <option value="">Source model…</option>
-                            {models.map((model) => (
-                                <option key={model}>{model}</option>
-                            ))}
-                        </select>
-                        <select
-                            aria-label="Rewrite target"
-                            value={target}
-                            onChange={(event) => setTarget(event.target.value)}
-                            className="border-ink-700 bg-ink-900 rounded border px-2 py-2 text-sm"
-                        >
-                            <option value="">Target model…</option>
-                            {models.map((model) => (
-                                <option key={model}>{model}</option>
-                            ))}
-                        </select>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            disabled={!source || !target || source === target}
-                            onClick={() => {
-                                setRedirects({ ...redirects, [source]: target });
-                                setSource("");
-                                setTarget("");
-                            }}
-                        >
-                            Add
-                        </Button>
+                            Allow every configured model
+                        </label>
+                        {!allModels && (
+                            <div className="mt-3">
+                                <Chips
+                                    values={models}
+                                    selected={allowedModels}
+                                    onChange={setAllowedModels}
+                                />
+                            </div>
+                        )}
                     </div>
-                </div>
+                </details>
+                <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
+                    <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
+                        Global request policy
+                    </summary>
+                    <div className="border-ink-700 grid gap-5 border-t p-4 md:grid-cols-2">
+                        <Field label="Allowed thinking levels">
+                            <label className="text-fog-200 mb-3 flex items-center gap-2 text-sm">
+                                <input
+                                    type="checkbox"
+                                    className="accent-brand-500 h-4 w-4"
+                                    checked={useGlobalThinking}
+                                    onChange={(event) => {
+                                        const enabled = event.target.checked;
+                                        setUseGlobalThinking(enabled);
+                                        if (enabled) {
+                                            setLevels(previousGlobalLevels);
+                                            setModelLevels({});
+                                        } else {
+                                            setPreviousGlobalLevels(levels);
+                                            setLevels([...LEVELS]);
+                                            setModelLevels(
+                                                Object.fromEntries(
+                                                    selectedModels.map((model) => [
+                                                        model,
+                                                        [...levels],
+                                                    ]),
+                                                ),
+                                            );
+                                        }
+                                    }}
+                                />
+                                Same thinking levels for every selected model
+                            </label>
+                            {useGlobalThinking ? (
+                                <Chips values={LEVELS} selected={levels} onChange={setLevels} />
+                            ) : (
+                                <p className="text-fog-400 text-xs">
+                                    Choose thinking levels separately for each model below.
+                                </p>
+                            )}
+                        </Field>
+                        <Field label="Allowed request modes">
+                            <Chips values={MODES} selected={modes} onChange={setModes} />
+                        </Field>
+                    </div>
+                </details>
+                {!useGlobalThinking && (
+                    <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
+                        <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
+                            Thinking levels by model
+                        </summary>
+                        <div className="border-ink-700 grid gap-3 border-t p-4 sm:grid-cols-2">
+                            {selectedModels.map((model) => (
+                                <div
+                                    key={model}
+                                    className="border-ink-700 bg-ink-900/40 min-w-0 rounded-md border p-3"
+                                >
+                                    <code className="text-fog-100 mb-3 block text-xs break-all">
+                                        {model}
+                                    </code>
+                                    <Chips
+                                        values={LEVELS}
+                                        selected={modelLevels[model] ?? previousGlobalLevels}
+                                        onChange={(items) =>
+                                            setModelLevels({ ...modelLevels, [model]: items })
+                                        }
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                    </details>
+                )}
+                <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
+                    <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
+                        Model rewrites
+                    </summary>
+                    <div className="border-ink-700 space-y-2 border-t p-4">
+                        <p className="text-fog-400 text-xs">
+                            Use exact model IDs. The client-facing source must also be allowed
+                            above.
+                        </p>
+                        {Object.entries(redirects).map(([from, to]) => (
+                            <div
+                                key={from}
+                                className="border-ink-700 flex items-center gap-2 rounded border p-2 text-xs"
+                            >
+                                <code className="min-w-0 flex-1 break-all">
+                                    {from} → {to}
+                                </code>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        const next = { ...redirects };
+                                        delete next[from];
+                                        setRedirects(next);
+                                    }}
+                                    aria-label={`Remove ${from} rewrite`}
+                                    className="text-bad-500 hover:bg-bad-500/10 rounded p-1 transition-colors"
+                                >
+                                    <Trash2 size={14} />
+                                </button>
+                            </div>
+                        ))}
+                        <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                            <SelectMenu
+                                value={source}
+                                onChange={setSource}
+                                ariaLabel="Rewrite source"
+                                options={[
+                                    { value: "", label: "Source model…" },
+                                    ...models.map((model) => ({ value: model, label: model })),
+                                ]}
+                            />
+                            <SelectMenu
+                                value={target}
+                                onChange={setTarget}
+                                ariaLabel="Rewrite target"
+                                options={[
+                                    { value: "", label: "Target model…" },
+                                    ...models
+                                        .filter((model) => !model.startsWith("gpt-5.6-"))
+                                        .map((model) => ({ value: model, label: model })),
+                                ]}
+                            />
+                            <Button
+                                type="button"
+                                variant="ghost"
+                                disabled={!source || !target || source === target}
+                                onClick={() => {
+                                    setRedirects({ ...redirects, [source]: target });
+                                    setSource("");
+                                    setTarget("");
+                                }}
+                            >
+                                Add
+                            </Button>
+                        </div>
+                    </div>
+                </details>
                 <Field
                     label="Per-model thinking and mode rules"
                     hint="Optional narrower limits for each model; requests must satisfy both the global and model rule."
@@ -299,6 +399,7 @@ function PresetModal({
                         modes={modelModes}
                         onLevels={setModelLevels}
                         onModes={setModelModes}
+                        showLevels={false}
                     />
                 </Field>
                 {error && (
@@ -388,10 +489,7 @@ export function PresetsPanel({
                                     {preset.name}
                                 </h3>
                                 <p className="text-fog-400 mt-0.5 text-xs">
-                                    {preset.user_count} assigned ·{" "}
-                                    {preset.allowed_models
-                                        ? `${preset.allowed_models.length} models`
-                                        : "All models"}
+                                    {preset.user_count} users assigned
                                 </p>
                             </div>
                             <div className="flex shrink-0 gap-1">
@@ -413,17 +511,12 @@ export function PresetsPanel({
                                             : "Delete preset"
                                     }
                                     onClick={() => void remove(preset)}
-                                    className="text-fog-400 hover:text-bad-500 rounded p-1.5 disabled:opacity-30"
+                                    className="text-bad-500 hover:bg-bad-500/10 rounded p-1.5 transition-colors disabled:opacity-70"
                                 >
                                     <Trash2 size={15} />
                                 </button>
                             </div>
                         </div>
-                        <p className="text-fog-400 mt-3 line-clamp-2 font-mono text-[11px]">
-                            {Object.entries(preset.model_overrides)
-                                .map(([from, to]) => `${from} → ${to}`)
-                                .join(" · ") || "No rewrites"}
-                        </p>
                     </article>
                 ))}
             </div>

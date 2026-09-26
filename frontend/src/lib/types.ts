@@ -265,6 +265,7 @@ export interface Account {
     workspace_name: string | null;
     authenticated_override: boolean;
     warmup_enabled: boolean;
+    auto_limit_reset_enabled: boolean;
     warmup_next_at: string | null;
     warmup_last_at: string | null;
     warmup_last_status: string | null;

@@ -470,6 +470,8 @@ def auto_redeem_weekly_reset(
     egress_target: "EgressTarget | None" = None,
 ) -> bool:
     """Redeem the earliest-expiring available credit once a weekly window is full."""
+    if not account.auto_limit_reset_enabled:
+        return False
     if account.weekly_used_pct is None or account.weekly_used_pct < 1.0 or not account.chatgpt_account_id:
         return False
 
@@ -484,6 +486,8 @@ def auto_redeem_weekly_reset(
     # redemption observes the newly reset weekly window instead of spending a
     # second credit from stale ORM state.
     locked = db.query(AccountDb).filter(AccountDb.id == account.id).populate_existing().with_for_update().one()
+    if not locked.auto_limit_reset_enabled:
+        return False
     if locked.weekly_used_pct is None or locked.weekly_used_pct < 1.0 or not locked.chatgpt_account_id:
         return False
 
@@ -552,6 +556,7 @@ def weekly_reset_recovery_candidates(db: Session) -> list[AccountDb]:
         account
         for account in db.query(AccountDb).all()
         if account.status != AccountStatus.DISABLED
+        and account.auto_limit_reset_enabled
         and account.provider_health != ProviderHealth.REAUTH_REQUIRED
         and account.chatgpt_account_id
         and account.weekly_used_pct is not None

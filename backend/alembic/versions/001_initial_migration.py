@@ -70,6 +70,7 @@ def upgrade() -> None:
         sa.Column("monthly_used_pct", sa.Float(), nullable=True),
         sa.Column("monthly_reset_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("reset_credits_available", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("auto_limit_reset_enabled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("quota_refreshed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("five_hour_rotation_threshold", sa.Float(), nullable=False, server_default="1.0"),
         sa.Column("weekly_rotation_threshold", sa.Float(), nullable=False, server_default="1.0"),

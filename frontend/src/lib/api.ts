@@ -321,6 +321,7 @@ export const api = {
             workspace_name?: string | null;
             authenticated_override?: boolean | null;
             warmup_enabled?: boolean | null;
+            auto_limit_reset_enabled?: boolean | null;
             // A number sets each rotation field; null or an omitted key leaves it unchanged.
             five_hour_rotation_threshold?: number | null;
             weekly_rotation_threshold?: number | null;
@@ -582,6 +583,8 @@ export const api = {
         id: string,
         patch: {
             name?: string;
+            preset_id?: string;
+            clear_preset_overrides?: string[];
             active?: boolean;
             priority?: number;
             fallback_enabled?: boolean;

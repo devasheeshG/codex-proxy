@@ -287,9 +287,26 @@ def update_user(
 
     Deactivating a user disables all of their keys for the proxy.
     """
-    user = db.query(UserDb).filter(UserDb.id == user_id).first()
+    user = db.query(UserDb).filter(UserDb.id == user_id).with_for_update().first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    if request.preset_id is not None:
+        preset = db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
+        if preset is None:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        presets.apply_preset(user, preset, preserve_overrides=False)
+    elif request.clear_preset_overrides:
+        preset = db.query(PresetDb).filter(PresetDb.id == user.preset_id).first()
+        if preset is None:
+            raise HTTPException(status_code=409, detail="User has no preset")
+        unknown = set(request.clear_preset_overrides) - presets.POLICY_COLUMNS.keys()
+        if unknown:
+            raise HTTPException(status_code=422, detail="Unknown preset field")
+        remaining = presets.overridden_fields(user) - set(request.clear_preset_overrides)
+        presets.set_overridden_fields(user, remaining)
+        for field in request.clear_preset_overrides:
+            setattr(user, presets.POLICY_COLUMNS[field], getattr(preset, presets.POLICY_COLUMNS[field]))
 
     if request.name is not None:
         user.name = request.name

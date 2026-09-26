@@ -11,6 +11,9 @@ from collections.abc import Iterable
 from app.config import get_settings
 
 DEFAULT_MODEL_IDS: tuple[str, ...] = (
+    "gpt-5.6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
     "gpt-6-astra",
     "gpt-6-sol",
     "gpt-6-luna",
@@ -24,9 +27,7 @@ MODEL_IDS = DEFAULT_MODEL_IDS
 def configured_model_ids(raw: str | None = None) -> tuple[str, ...]:
     """Return the normalized allowlist from ``ALLOWED_MODELS`` or defaults."""
     value = get_settings().ALLOWED_MODELS if raw is None else raw
-    models = tuple(
-        dict.fromkeys(item.strip().lower() for item in value.split(",") if item.strip() and not item.strip().lower().startswith("gpt-5.6"))
-    )
+    models = tuple(dict.fromkeys(item.strip().lower() for item in value.split(",") if item.strip()))
     return models or DEFAULT_MODEL_IDS
 
 

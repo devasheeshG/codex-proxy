@@ -11,6 +11,10 @@ from app.utils.postgres.base import SessionFactory
 
 def test_quota_refresher_redeems_an_exhausted_weekly_window(seed_account, monkeypatch):
     account_id = seed_account("refresher-exhausted", weekly_used_pct=0.5)
+    with SessionFactory() as db:
+        account = db.get(AccountDb, account_id)
+        account.auto_limit_reset_enabled = True
+        db.commit()
     exhausted = {
         "five_hour": {"utilization": 0.25},
         "weekly": {"utilization": 1.0},
@@ -60,6 +64,30 @@ def test_quota_refresher_redeems_an_exhausted_weekly_window(seed_account, monkey
         account = db.get(AccountDb, account_id)
         assert account.weekly_used_pct == 0.0
         assert account.reset_credits_available == 0
+
+
+def test_quota_refresher_does_not_auto_redeem_without_opt_in(seed_account, monkeypatch):
+    account_id = seed_account("refresher-no-auto-reset", weekly_used_pct=1.0)
+    usage = {
+        "five_hour": {"utilization": 0.25},
+        "weekly": {"utilization": 1.0},
+        "monthly": None,
+        "reset_credits_available": 1,
+        "limit_reached": True,
+    }
+    monkeypatch.setattr(quota_refresher.oauth, "fetch_usage", lambda *_args: usage)
+    monkeypatch.setattr(quota_refresher.oauth, "fetch_model_catalog", lambda *_args, **_kwargs: {"models": []})
+
+    def unexpected_redemption(*_args, **_kwargs):
+        raise AssertionError("An account without opt-in must not redeem a credit")
+
+    monkeypatch.setattr(quota_refresher.oauth, "consume_reset_credit", unexpected_redemption)
+    quota_refresher.refresh_once()
+
+    with SessionFactory() as db:
+        account = db.get(AccountDb, account_id)
+        assert account.auto_limit_reset_enabled is False
+        assert account.weekly_used_pct == 1.0
 
 
 def test_quota_refresher_persists_stale_model_catalog(seed_account, monkeypatch):

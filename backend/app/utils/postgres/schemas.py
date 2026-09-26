@@ -71,6 +71,8 @@ class AccountDb(DatabaseBase):
     monthly_used_pct = Column(Float, nullable=True)
     monthly_reset_at = Column(DateTime(timezone=True), nullable=True)
     reset_credits_available = Column(Integer, nullable=False, default=0, server_default="0")
+    # Provider reset credits are only redeemed automatically when explicitly enabled per account.
+    auto_limit_reset_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     quota_refreshed_at = Column(DateTime(timezone=True), nullable=True)
     # Per-window rotation policies (tuned in the dashboard); seeded with config defaults on every new account.
     five_hour_rotation_threshold = Column(

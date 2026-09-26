@@ -37,6 +37,7 @@ class Account(BaseModel):
     monthly_reset_at: Optional[datetime]
     cooldown_until: Optional[datetime]
     reset_credits_available: int
+    auto_limit_reset_enabled: bool
     quota_refreshed_at: Optional[datetime]
     warmup_enabled: bool
     warmup_next_at: Optional[datetime]
@@ -80,6 +81,7 @@ class Account(BaseModel):
             monthly_reset_at=account_db.monthly_reset_at,
             cooldown_until=account_db.cooldown_until,
             reset_credits_available=account_db.reset_credits_available or 0,
+            auto_limit_reset_enabled=bool(account_db.auto_limit_reset_enabled),
             quota_refreshed_at=account_db.quota_refreshed_at,
             warmup_enabled=bool(account_db.warmup_enabled),
             warmup_next_at=account_db.warmup_next_at,
@@ -110,6 +112,7 @@ class UpdateAccountRequest(BaseModel):
     workspace_name: Optional[str] = Field(default=None, max_length=200)
     authenticated_override: Optional[bool] = None
     warmup_enabled: Optional[bool] = None
+    auto_limit_reset_enabled: Optional[bool] = None
     # Rotation policy. Send a value to change it; omit or null leaves it unchanged.
     five_hour_rotation_threshold: Optional[float] = Field(default=None, ge=0, le=1)
     weekly_rotation_threshold: Optional[float] = Field(default=None, ge=0, le=1)

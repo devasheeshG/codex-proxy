@@ -7,17 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useState } from "react";
-import {
-    Check,
-    ChevronRight,
-    KeyRound,
-    ListChecks,
-    Pencil,
-    Plus,
-    Search,
-    Trash2,
-    X,
-} from "lucide-react";
+import { Check, ChevronRight, KeyRound, ListChecks, Pencil, Search, Trash2 } from "lucide-react";
 import { api, API_BASE_URL, ApiError } from "@/lib/api";
 import { ApiKey, ReasoningLevel, RequestMode, User } from "@/lib/types";
 import type { Preset } from "@/lib/types";
@@ -35,6 +25,7 @@ import {
     Field,
     LoadingState,
     Modal,
+    SelectMenu,
     Spinner,
     StatusToggle,
     TextInput,
@@ -218,257 +209,6 @@ function ChoiceGroup<T extends string>({
                     {value === "ultrafast" ? "UltraFast" : value}
                 </label>
             ))}
-        </div>
-    );
-}
-
-function ModelPolicyEditor({
-    options,
-    value,
-    onChange,
-}: {
-    options: string[];
-    value: string[] | null;
-    onChange: (value: string[] | null) => void;
-}) {
-    const [query, setQuery] = useState("");
-    const [customModel, setCustomModel] = useState("");
-    const unrestricted = value === null;
-    const selected = value ?? [];
-    const available = Array.from(new Set([...options, ...selected])).sort();
-    const filtered = available.filter((model) =>
-        model.toLowerCase().includes(query.trim().toLowerCase()),
-    );
-
-    const toggleModel = (model: string) => {
-        const next = selected.includes(model)
-            ? selected.filter((candidate) => candidate !== model)
-            : [...selected, model].sort();
-        onChange(next);
-    };
-
-    const addCustomModel = () => {
-        const model = customModel.trim().toLowerCase();
-        if (!model) return;
-        onChange(Array.from(new Set([...selected, model])).sort());
-        setCustomModel("");
-    };
-
-    return (
-        <div className="border-ink-700 bg-ink-900/40 overflow-hidden rounded-lg border">
-            <label className="border-ink-700 flex cursor-pointer items-start gap-3 border-b px-3.5 py-3">
-                <input
-                    type="checkbox"
-                    checked={unrestricted}
-                    onChange={(event) => onChange(event.target.checked ? null : [...options])}
-                    className="border-ink-600 bg-ink-900 accent-brand-500 mt-0.5 h-4 w-4 rounded"
-                />
-                <span>
-                    <span className="text-fog-100 block text-sm font-medium">
-                        Allow every model
-                    </span>
-                    <span className="text-fog-400 mt-0.5 block text-xs leading-relaxed">
-                        Automatically includes models added to the pooled accounts later.
-                    </span>
-                </span>
-            </label>
-
-            {!unrestricted ? (
-                <div className="space-y-3 p-3.5">
-                    <div className="flex items-center justify-between gap-3">
-                        <span className="text-fog-300 text-xs font-medium">
-                            {selected.length} selected
-                        </span>
-                        {selected.length > 0 ? (
-                            <button
-                                type="button"
-                                onClick={() => onChange([])}
-                                className="text-fog-400 hover:text-fog-100 text-xs transition-colors"
-                            >
-                                Clear selection
-                            </button>
-                        ) : null}
-                    </div>
-
-                    {available.length > 0 ? (
-                        <>
-                            <div className="relative">
-                                <Search
-                                    size={14}
-                                    className="text-fog-500 pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
-                                />
-                                <input
-                                    value={query}
-                                    onChange={(event) => setQuery(event.target.value)}
-                                    placeholder="Search known models…"
-                                    className="border-ink-600 bg-ink-900 text-fog-100 placeholder:text-fog-500 focus:border-brand-400 w-full rounded-md border py-2 pr-3 pl-9 font-mono text-xs outline-none"
-                                />
-                            </div>
-                            <div className="grid max-h-48 grid-cols-1 gap-1.5 overflow-y-auto sm:grid-cols-2">
-                                {filtered.map((model) => (
-                                    <label
-                                        key={model}
-                                        className="border-ink-700 bg-ink-900/70 text-fog-200 hover:border-ink-600 flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 font-mono text-xs transition-colors"
-                                    >
-                                        <input
-                                            type="checkbox"
-                                            checked={selected.includes(model)}
-                                            onChange={() => toggleModel(model)}
-                                            className="border-ink-600 bg-ink-900 accent-brand-500 h-3.5 w-3.5 rounded"
-                                        />
-                                        <span className="truncate">{model}</span>
-                                    </label>
-                                ))}
-                                {filtered.length === 0 ? (
-                                    <p className="text-fog-500 col-span-full py-3 text-center text-xs">
-                                        No matching known models.
-                                    </p>
-                                ) : null}
-                            </div>
-                        </>
-                    ) : (
-                        <p className="text-fog-400 text-xs leading-relaxed">
-                            No model catalog has been cached yet. Add an exact model ID below.
-                        </p>
-                    )}
-
-                    <div className="flex gap-2">
-                        <div className="relative flex-1">
-                            {customModel ? (
-                                <button
-                                    type="button"
-                                    onClick={() => setCustomModel("")}
-                                    className="text-fog-500 hover:text-fog-200 absolute top-1/2 right-2.5 -translate-y-1/2"
-                                    aria-label="Clear custom model"
-                                >
-                                    <X size={13} />
-                                </button>
-                            ) : null}
-                            <input
-                                value={customModel}
-                                onChange={(event) => setCustomModel(event.target.value)}
-                                onKeyDown={(event) => {
-                                    if (event.key === "Enter") {
-                                        event.preventDefault();
-                                        addCustomModel();
-                                    }
-                                }}
-                                placeholder="Add exact model ID"
-                                className="border-ink-600 bg-ink-900 text-fog-100 placeholder:text-fog-500 focus:border-brand-400 w-full rounded-md border px-3 py-2 pr-8 font-mono text-xs outline-none"
-                            />
-                        </div>
-                        <Button
-                            type="button"
-                            variant="ghost"
-                            disabled={!customModel.trim()}
-                            onClick={addCustomModel}
-                        >
-                            <Plus size={14} />
-                            Add
-                        </Button>
-                    </div>
-                    {selected.length === 0 ? (
-                        <p className="text-warn-500 text-xs">
-                            Select or add at least one model before saving.
-                        </p>
-                    ) : null}
-                </div>
-            ) : null}
-        </div>
-    );
-}
-
-function ModelOverrideEditor({
-    options,
-    value,
-    onChange,
-}: {
-    options: string[];
-    value: Record<string, string>;
-    onChange: (value: Record<string, string>) => void;
-}) {
-    const [source, setSource] = useState("");
-    const [target, setTarget] = useState("");
-    const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b));
-    const add = () => {
-        const requested = source.trim().toLowerCase();
-        const upstream = target.trim().toLowerCase();
-        if (!requested || !upstream || requested === upstream) return;
-        onChange({ ...value, [requested]: upstream });
-        setSource("");
-        setTarget("");
-    };
-
-    return (
-        <div className="border-ink-700 bg-ink-900/40 overflow-hidden rounded-lg border">
-            {entries.length > 0 ? (
-                <div className="border-ink-700 divide-ink-700 divide-y border-b">
-                    {entries.map(([requested, upstream]) => (
-                        <div
-                            key={requested}
-                            className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto] items-center gap-2 px-3.5 py-2.5"
-                        >
-                            <code className="text-fog-200 truncate text-xs">{requested}</code>
-                            <span className="text-brand-300 text-xs" aria-hidden="true">
-                                →
-                            </span>
-                            <code className="text-fog-100 truncate text-xs">{upstream}</code>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    const next = { ...value };
-                                    delete next[requested];
-                                    onChange(next);
-                                }}
-                                className="text-fog-500 hover:text-bad-500 rounded p-1 transition-colors"
-                                aria-label={`Remove rewrite from ${requested}`}
-                            >
-                                <Trash2 size={14} />
-                            </button>
-                        </div>
-                    ))}
-                </div>
-            ) : (
-                <p className="text-fog-400 px-3.5 pt-3 text-xs">
-                    Requests currently keep their original model ID.
-                </p>
-            )}
-            <div className="grid gap-2 p-3.5 sm:grid-cols-[1fr_auto_1fr_auto] sm:items-center">
-                <input
-                    list="known-model-overrides"
-                    value={source}
-                    onChange={(event) => setSource(event.target.value)}
-                    placeholder="Requested model"
-                    className="border-ink-600 bg-ink-900 text-fog-100 placeholder:text-fog-500 focus:border-brand-400 min-w-0 rounded-md border px-3 py-2 font-mono text-xs outline-none"
-                />
-                <span className="text-brand-300 hidden text-center text-sm sm:block">→</span>
-                <input
-                    list="known-model-overrides"
-                    value={target}
-                    onChange={(event) => setTarget(event.target.value)}
-                    onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                            event.preventDefault();
-                            add();
-                        }
-                    }}
-                    placeholder="Upstream model"
-                    className="border-ink-600 bg-ink-900 text-fog-100 placeholder:text-fog-500 focus:border-brand-400 min-w-0 rounded-md border px-3 py-2 font-mono text-xs outline-none"
-                />
-                <Button
-                    type="button"
-                    variant="ghost"
-                    disabled={!source.trim() || !target.trim() || source.trim() === target.trim()}
-                    onClick={add}
-                >
-                    <Plus size={14} /> Add
-                </Button>
-                <datalist id="known-model-overrides">
-                    {options.map((model) => (
-                        <option key={model} value={model} />
-                    ))}
-                </datalist>
-            </div>
         </div>
     );
 }
@@ -981,13 +721,6 @@ export default function UsersPage() {
 
                                                             {expanded ? (
                                                                 <div className="border-ink-700 bg-ink-900/40 border-t p-4 sm:px-6">
-                                                                    <PresetAssignment
-                                                                        user={user}
-                                                                        presets={presets}
-                                                                        onChanged={() =>
-                                                                            void load(true)
-                                                                        }
-                                                                    />
                                                                     <KeysPanel
                                                                         user={user}
                                                                         onChanged={() =>
@@ -1025,7 +758,6 @@ export default function UsersPage() {
 
             {showCreate ? (
                 <CreateUserModal
-                    modelOptions={modelOptions}
                     presets={presets}
                     onClose={() => setShowCreate(false)}
                     onCreated={(user) => {
@@ -1079,96 +811,6 @@ export default function UsersPage() {
 // ---------------------------------------------------------------------------
 // Per-user key management panel (shown when a user card is expanded).
 // ---------------------------------------------------------------------------
-
-function PresetAssignment({
-    user,
-    presets,
-    onChanged,
-}: {
-    user: User;
-    presets: Preset[];
-    onChanged: () => void;
-}) {
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const assign = async (presetId: string) => {
-        setBusy(true);
-        setError(null);
-        try {
-            await api.assignUserPreset(user.id, presetId);
-            onChanged();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Could not assign preset");
-        } finally {
-            setBusy(false);
-        }
-    };
-    const clear = async (field: string) => {
-        setBusy(true);
-        setError(null);
-        try {
-            await api.clearUserPresetOverride(user.id, field);
-            onChanged();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : "Could not clear override");
-        } finally {
-            setBusy(false);
-        }
-    };
-    return (
-        <div className="border-ink-700 mb-4 rounded-lg border p-3 sm:p-4">
-            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-                <Field
-                    label="Policy preset"
-                    hint="Changing presets replaces the policy baseline and clears user overrides."
-                >
-                    <select
-                        aria-label={`Policy preset for ${user.name}`}
-                        value={user.preset_id ?? ""}
-                        disabled={busy}
-                        onChange={(event) => void assign(event.target.value)}
-                        className="border-ink-700 bg-ink-900 text-fog-100 w-full min-w-0 rounded-md border px-3 py-2 text-sm"
-                    >
-                        <option value="" disabled>
-                            No preset
-                        </option>
-                        {presets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                                {preset.name}
-                            </option>
-                        ))}
-                    </select>
-                </Field>
-                <span className="text-fog-400 pb-2 text-xs">
-                    {user.preset_overrides.length
-                        ? `${user.preset_overrides.length} user override${user.preset_overrides.length === 1 ? "" : "s"}`
-                        : "Fully inherited"}
-                </span>
-            </div>
-            {user.preset_overrides.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                    {user.preset_overrides.map((field) => (
-                        <button
-                            type="button"
-                            key={field}
-                            disabled={busy}
-                            onClick={() => void clear(field)}
-                            title="Reset this field to the preset"
-                            className="border-brand-500/30 bg-brand-500/10 text-brand-300 hover:bg-brand-500/20 rounded-md border px-2 py-1 text-xs"
-                        >
-                            {field.replaceAll("_", " ")} · reset
-                        </button>
-                    ))}
-                </div>
-            )}
-            {error && (
-                <p role="alert" className="text-bad-500 mt-2 text-xs">
-                    {error}
-                </p>
-            )}
-        </div>
-    );
-}
 
 function KeysPanel({
     user,
@@ -1519,12 +1161,10 @@ function EditKeyModal({
 // ---------------------------------------------------------------------------
 
 function CreateUserModal({
-    modelOptions,
     presets,
     onClose,
     onCreated,
 }: {
-    modelOptions: string[];
     presets: Preset[];
     onClose: () => void;
     onCreated: (user: User) => void;
@@ -1538,24 +1178,6 @@ function CreateUserModal({
     const [monthlySpend, setMonthlySpend] = useState("");
     const [lifetimeSpend, setLifetimeSpend] = useState("");
     const [presetId, setPresetId] = useState(presets[0]?.id ?? "");
-    const [requestModes, setRequestModes] = useState<RequestMode[]>(
-        presets[0]?.allowed_request_modes ?? [...REQUEST_MODES],
-    );
-    const [reasoningLevels, setReasoningLevels] = useState<ReasoningLevel[]>(
-        presets[0]?.allowed_reasoning_levels ?? [...REASONING_LEVELS],
-    );
-    const [allowedModels, setAllowedModels] = useState<string[] | null>(
-        presets[0]?.allowed_models ?? null,
-    );
-    const [modelOverrides, setModelOverrides] = useState<Record<string, string>>(
-        presets[0]?.model_overrides ?? { "gpt-6-astra": "gpt-6-sol" },
-    );
-    const [modelReasoning, setModelReasoning] = useState<Record<string, ReasoningLevel[]>>(
-        presets[0]?.model_reasoning_levels ?? {},
-    );
-    const [modelModes, setModelModes] = useState<Record<string, RequestMode[]>>(
-        presets[0]?.model_request_modes ?? {},
-    );
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -1572,13 +1194,7 @@ function CreateUserModal({
                 lifetime_token_budget: parseLimitInput(lifetimeTokens),
                 monthly_spend_budget_usd: parseMoneyInput(monthlySpend),
                 lifetime_spend_budget_usd: parseMoneyInput(lifetimeSpend),
-                allowed_request_modes: requestModes,
-                allowed_reasoning_levels: reasoningLevels,
-                allowed_models: allowedModels,
-                model_overrides: modelOverrides,
                 preset_id: presetId || undefined,
-                model_reasoning_levels: modelReasoning,
-                model_request_modes: modelModes,
             });
             onCreated(user);
         } catch (err) {
@@ -1613,11 +1229,12 @@ function CreateUserModal({
                             onChange={(e) => setPriority(e.target.value)}
                         />
                     </Field>
-                    <label className="text-fog-300 flex items-center gap-2 pt-7 text-sm">
+                    <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-sm sm:mt-6">
                         <input
                             type="checkbox"
                             checked={fallbackEnabled}
                             onChange={(e) => setFallbackEnabled(e.target.checked)}
+                            className="accent-brand-500 h-4 w-4 shrink-0"
                         />
                         Allow API fallback providers
                     </label>
@@ -1625,31 +1242,21 @@ function CreateUserModal({
 
                 <Field
                     label="Policy preset"
-                    hint="Baseline for this user. You can customize any setting below."
+                    hint="This user's model and request policy comes from the preset."
                 >
-                    <select
+                    <SelectMenu
                         value={presetId}
-                        onChange={(event) => {
-                            const next = presets.find((preset) => preset.id === event.target.value);
-                            setPresetId(event.target.value);
-                            if (next) {
-                                setRequestModes(next.allowed_request_modes);
-                                setReasoningLevels(next.allowed_reasoning_levels);
-                                setAllowedModels(next.allowed_models);
-                                setModelOverrides(next.model_overrides);
-                                setModelReasoning(next.model_reasoning_levels);
-                                setModelModes(next.model_request_modes);
-                            }
-                        }}
-                        className="border-ink-700 bg-ink-900 text-fog-100 w-full rounded-md border px-3 py-2 text-sm"
-                    >
-                        {presets.length === 0 && <option value="">No presets available</option>}
-                        {presets.map((preset) => (
-                            <option key={preset.id} value={preset.id}>
-                                {preset.name}
-                            </option>
-                        ))}
-                    </select>
+                        ariaLabel="Policy preset for new user"
+                        onChange={setPresetId}
+                        options={
+                            presets.length
+                                ? presets.map((preset) => ({
+                                      value: preset.id,
+                                      label: preset.name,
+                                  }))
+                                : [{ value: "", label: "No presets available" }]
+                        }
+                    />
                 </Field>
 
                 <Field label="Rate limit (req / min)" hint="Across every key. Blank = unlimited.">
@@ -1712,53 +1319,6 @@ function CreateUserModal({
                     </div>
                 </div>
 
-                <Field label="Allowed request modes" hint="Choose at least one mode.">
-                    <ChoiceGroup
-                        values={REQUEST_MODES}
-                        selected={requestModes}
-                        onChange={setRequestModes}
-                    />
-                </Field>
-                <Field label="Allowed thinking levels" hint="Choose at least one level.">
-                    <ChoiceGroup
-                        values={REASONING_LEVELS}
-                        selected={reasoningLevels}
-                        onChange={setReasoningLevels}
-                    />
-                </Field>
-                <Field
-                    label="Allowed models"
-                    hint="This checks the model the client requested, before any rewrite below."
-                >
-                    <ModelPolicyEditor
-                        options={modelOptions}
-                        value={allowedModels}
-                        onChange={setAllowedModels}
-                    />
-                </Field>
-                <Field
-                    label="Server-side model rewrites"
-                    hint="Rewrite an exact client model ID before account selection and upstream routing."
-                >
-                    <ModelOverrideEditor
-                        options={modelOptions}
-                        value={modelOverrides}
-                        onChange={setModelOverrides}
-                    />
-                </Field>
-                <Field
-                    label="Per-model thinking and request modes"
-                    hint="Optional user-level rules; save to override the preset baseline."
-                >
-                    <ModelRulesEditor
-                        models={modelOptions}
-                        levels={modelReasoning}
-                        modes={modelModes}
-                        onLevels={setModelReasoning}
-                        onModes={setModelModes}
-                    />
-                </Field>
-
                 {error ? (
                     <div
                         role="alert"
@@ -1772,17 +1332,7 @@ function CreateUserModal({
                     <Button type="button" variant="ghost" onClick={onClose} disabled={submitting}>
                         Cancel
                     </Button>
-                    <Button
-                        type="submit"
-                        variant="primary"
-                        disabled={
-                            submitting ||
-                            !name.trim() ||
-                            requestModes.length === 0 ||
-                            reasoningLevels.length === 0 ||
-                            (allowedModels !== null && allowedModels.length === 0)
-                        }
-                    >
+                    <Button type="submit" variant="primary" disabled={submitting || !name.trim()}>
                         {submitting ? <Spinner /> : null}
                         Create
                     </Button>
@@ -1828,16 +1378,24 @@ function EditUserModal({
     const [lifetimeSpend, setLifetimeSpend] = useState(
         user.lifetime_spend_budget_usd ? String(user.lifetime_spend_budget_usd) : "",
     );
+    const [selectedPresetId, setSelectedPresetId] = useState(user.preset_id ?? "");
+    const [overrideFields, setOverrideFields] = useState<string[]>(user.preset_overrides);
+    const toggleOverride = (field: string) =>
+        setOverrideFields((current) =>
+            current.includes(field)
+                ? current.filter((item) => item !== field)
+                : [...current, field],
+        );
     const [requestModes, setRequestModes] = useState<RequestMode[]>([
         ...user.allowed_request_modes,
     ]);
     const [reasoningLevels, setReasoningLevels] = useState<ReasoningLevel[]>([
         ...user.allowed_reasoning_levels,
     ]);
-    const [allowedModels, setAllowedModels] = useState<string[] | null>(
+    const [allowedModels] = useState<string[] | null>(
         user.allowed_models === null ? null : [...user.allowed_models],
     );
-    const [modelOverrides, setModelOverrides] = useState<Record<string, string>>({
+    const [modelOverrides] = useState<Record<string, string>>({
         ...user.model_overrides,
     });
     const [modelReasoning, setModelReasoning] = useState<Record<string, ReasoningLevel[]>>({
@@ -1854,7 +1412,12 @@ function EditUserModal({
         setError(null);
         setSubmitting(true);
         try {
+            const presetChanged = selectedPresetId !== (user.preset_id ?? "");
             const updated = await api.updateUser(user.id, {
+                ...(presetChanged && selectedPresetId ? { preset_id: selectedPresetId } : {}),
+                clear_preset_overrides: presetChanged
+                    ? []
+                    : user.preset_overrides.filter((field) => !overrideFields.includes(field)),
                 name: name.trim(),
                 active,
                 priority: Number(priority) || 1,
@@ -1864,12 +1427,24 @@ function EditUserModal({
                 lifetime_token_budget: parseLimitInput(lifetimeTokens) ?? 0,
                 monthly_spend_budget_usd: parseMoneyInput(monthlySpend) ?? 0,
                 lifetime_spend_budget_usd: parseMoneyInput(lifetimeSpend) ?? 0,
-                allowed_request_modes: requestModes,
-                allowed_reasoning_levels: reasoningLevels,
-                allowed_models: allowedModels,
-                model_overrides: modelOverrides,
-                model_reasoning_levels: modelReasoning,
-                model_request_modes: modelModes,
+                ...(overrideFields.includes("allowed_request_modes")
+                    ? { allowed_request_modes: requestModes }
+                    : {}),
+                ...(overrideFields.includes("allowed_reasoning_levels")
+                    ? { allowed_reasoning_levels: reasoningLevels }
+                    : {}),
+                ...(overrideFields.includes("allowed_models")
+                    ? { allowed_models: allowedModels }
+                    : {}),
+                ...(overrideFields.includes("model_overrides")
+                    ? { model_overrides: modelOverrides }
+                    : {}),
+                ...(overrideFields.includes("model_reasoning_levels")
+                    ? { model_reasoning_levels: modelReasoning }
+                    : {}),
+                ...(overrideFields.includes("model_request_modes")
+                    ? { model_request_modes: modelModes }
+                    : {}),
             });
             onSaved(updated);
         } catch (err) {
@@ -1881,11 +1456,6 @@ function EditUserModal({
     return (
         <Modal title={`Edit ${user.name}`} onClose={onClose} widthClass="max-w-3xl">
             <form onSubmit={submit} className="space-y-4">
-                <p className="border-ink-700 bg-ink-950/40 text-fog-400 rounded-md border px-3 py-2 text-xs">
-                    Preset: {presets.find((preset) => preset.id === user.preset_id)?.name ?? "None"}
-                    . Values changed below become user overrides. To assign another preset or reset
-                    a field, expand this user&apos;s card.
-                </p>
                 <Field label="Name">
                     <TextInput value={name} onChange={(e) => setName(e.target.value)} required />
                 </Field>
@@ -1903,11 +1473,12 @@ function EditUserModal({
                             onChange={(e) => setPriority(e.target.value)}
                         />
                     </Field>
-                    <label className="text-fog-300 flex items-center gap-2 pt-7 text-sm">
+                    <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-sm sm:mt-6">
                         <input
                             type="checkbox"
                             checked={fallbackEnabled}
                             onChange={(e) => setFallbackEnabled(e.target.checked)}
+                            className="accent-brand-500 h-4 w-4 shrink-0"
                         />
                         Allow API fallback providers
                     </label>
@@ -1976,55 +1547,99 @@ function EditUserModal({
                     </div>
                 </div>
 
-                <Field label="Allowed request modes" hint="Choose at least one mode.">
-                    <ChoiceGroup
-                        values={REQUEST_MODES}
-                        selected={requestModes}
-                        onChange={setRequestModes}
+                <Field label="Policy preset">
+                    <SelectMenu
+                        value={selectedPresetId}
+                        ariaLabel="Policy preset"
+                        onChange={(value) => {
+                            if (
+                                value !== selectedPresetId &&
+                                overrideFields.length > 0 &&
+                                !window.confirm(
+                                    "Changing presets will clear this user's policy overrides. Continue?",
+                                )
+                            )
+                                return;
+                            const preset = presets.find((item) => item.id === value);
+                            setSelectedPresetId(value);
+                            setOverrideFields([]);
+                            if (preset) {
+                                setRequestModes(preset.allowed_request_modes);
+                                setReasoningLevels(preset.allowed_reasoning_levels);
+                                setModelReasoning(preset.model_reasoning_levels);
+                                setModelModes(preset.model_request_modes);
+                            }
+                        }}
+                        options={presets.map((preset) => ({
+                            value: preset.id,
+                            label: preset.name,
+                        }))}
                     />
                 </Field>
-                <Field
-                    label="Allowed thinking levels"
-                    hint="Requests must set reasoning effort when this list is restricted."
-                >
-                    <ChoiceGroup
-                        values={REASONING_LEVELS}
-                        selected={reasoningLevels}
-                        onChange={setReasoningLevels}
-                    />
-                </Field>
-                <Field
-                    label="Allowed models"
-                    hint="This checks the client-requested model before applying a rewrite."
-                >
-                    <ModelPolicyEditor
-                        options={modelOptions}
-                        value={allowedModels}
-                        onChange={setAllowedModels}
-                    />
-                </Field>
-                <Field
-                    label="Server-side model rewrites"
-                    hint="Exact per-user rewrites applied before account selection and upstream routing."
-                >
-                    <ModelOverrideEditor
-                        options={modelOptions}
-                        value={modelOverrides}
-                        onChange={setModelOverrides}
-                    />
-                </Field>
-                <Field
-                    label="Per-model thinking and request modes"
-                    hint="Optional user-level rules, inherited from the preset until changed."
-                >
-                    <ModelRulesEditor
-                        models={modelOptions}
-                        levels={modelReasoning}
-                        modes={modelModes}
-                        onLevels={setModelReasoning}
-                        onModes={setModelModes}
-                    />
-                </Field>
+
+                <div className="border-ink-700 bg-ink-950/30 space-y-4 rounded-lg border p-4">
+                    <div className="text-fog-200 text-sm font-medium">User overrides</div>
+                    {(
+                        [
+                            ["allowed_request_modes", "Request modes"],
+                            ["allowed_reasoning_levels", "Thinking levels"],
+                            ["model_reasoning_levels", "Per-model thinking levels"],
+                            ["model_request_modes", "Per-model request modes"],
+                        ] as const
+                    ).map(([field, label]) => (
+                        <label
+                            key={field}
+                            className="text-fog-200 flex cursor-pointer items-center gap-2.5 text-sm"
+                        >
+                            <input
+                                type="checkbox"
+                                checked={overrideFields.includes(field)}
+                                onChange={() => toggleOverride(field)}
+                                className="accent-brand-500 h-4 w-4"
+                            />
+                            Override {label.toLowerCase()}
+                        </label>
+                    ))}
+                </div>
+
+                {overrideFields.includes("allowed_request_modes") && (
+                    <Field label="Allowed request modes" hint="Choose at least one mode.">
+                        <ChoiceGroup
+                            values={REQUEST_MODES}
+                            selected={requestModes}
+                            onChange={setRequestModes}
+                        />
+                    </Field>
+                )}
+                {overrideFields.includes("allowed_reasoning_levels") && (
+                    <Field
+                        label="Allowed thinking levels"
+                        hint="Requests must set reasoning effort when this list is restricted."
+                    >
+                        <ChoiceGroup
+                            values={REASONING_LEVELS}
+                            selected={reasoningLevels}
+                            onChange={setReasoningLevels}
+                        />
+                    </Field>
+                )}
+                {(overrideFields.includes("model_reasoning_levels") ||
+                    overrideFields.includes("model_request_modes")) && (
+                    <Field
+                        label="Per-model thinking and request modes"
+                        hint="Optional user-level rules, inherited from the preset until changed."
+                    >
+                        <ModelRulesEditor
+                            models={modelOptions}
+                            levels={modelReasoning}
+                            modes={modelModes}
+                            onLevels={setModelReasoning}
+                            onModes={setModelModes}
+                            showLevels={overrideFields.includes("model_reasoning_levels")}
+                            showModes={overrideFields.includes("model_request_modes")}
+                        />
+                    </Field>
+                )}
 
                 <label className="border-ink-700 bg-ink-900/50 flex items-center gap-2.5 rounded-md border px-3 py-2.5">
                     <input

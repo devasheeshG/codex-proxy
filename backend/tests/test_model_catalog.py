@@ -15,6 +15,11 @@ def test_blank_model_allowlist_keeps_safe_defaults():
     assert configured_model_ids("") == DEFAULT_MODEL_IDS
 
 
-def test_gpt_5_6_is_disabled_even_if_configured():
-    assert configured_model_ids("gpt-5.6,gpt-5.6-sol,GPT-5.6-LUNA,gpt-6-sol") == ("gpt-6-sol",)
-    assert not any(model.startswith("gpt-5.6") for model in DEFAULT_MODEL_IDS)
+def test_gpt_5_6_is_configurable():
+    assert configured_model_ids("gpt-5.6,gpt-5.6-sol,GPT-5.6-LUNA,gpt-6-sol") == (
+        "gpt-5.6",
+        "gpt-5.6-sol",
+        "gpt-5.6-luna",
+        "gpt-6-sol",
+    )
+    assert "gpt-5.6-sol" in DEFAULT_MODEL_IDS

@@ -72,6 +72,32 @@ def test_presets_inherit_and_preserve_user_overrides(client, admin_headers):
     assert client.delete(f"/api/v1/presets/{preset_id}", headers=admin_headers).status_code == 409
 
 
+def test_user_policy_edit_is_atomic_with_preset_assignment(client, admin_headers):
+    first = client.post("/api/v1/presets", headers=admin_headers, json={"name": "First", "allowed_request_modes": ["standard"]}).json()
+    second = client.post("/api/v1/presets", headers=admin_headers, json={"name": "Second", "allowed_request_modes": ["fast"]}).json()
+    user = client.post("/api/v1/users", headers=admin_headers, json={"name": "atomic", "preset_id": first["id"]}).json()["user"]
+    path = f"/api/v1/users/{user['id']}"
+    failed = client.put(path, headers=admin_headers, json={"preset_id": str(uuid.uuid4()), "name": "changed"})
+    assert failed.status_code == 404
+    assert client.get("/api/v1/users", headers=admin_headers).json()["users"][0]["name"] == "atomic"
+    changed = client.put(path, headers=admin_headers, json={"preset_id": second["id"], "name": "changed", "allowed_request_modes": ["standard"]})
+    assert changed.status_code == 200, changed.text
+    assert changed.json()["user"]["preset_id"] == second["id"]
+    assert changed.json()["user"]["preset_overrides"] == ["allowed_request_modes"]
+    reset = client.put(path, headers=admin_headers, json={"clear_preset_overrides": ["allowed_request_modes"]})
+    assert reset.status_code == 200, reset.text
+    assert reset.json()["user"]["allowed_request_modes"] == ["fast"]
+
+
+def test_gpt_5_6_alias_cannot_be_rewrite_target(client, admin_headers):
+    response = client.post(
+        "/api/v1/presets",
+        headers=admin_headers,
+        json={"name": "invalid-alias", "model_overrides": {"gpt-6-sol": "gpt-5.6-sol"}},
+    )
+    assert response.status_code == 422
+
+
 def test_preset_migration_preserves_existing_user_policies(client, admin_headers):
     from app.scripts.migrate import sync_canonical_schema
 
@@ -139,7 +165,12 @@ def test_user_crud_and_key_management(client, admin_headers):
         "max",
     ]
     assert created.json()["user"]["allowed_models"] is None
-    assert created.json()["user"]["model_overrides"] == {"gpt-6-astra": "gpt-6-sol"}
+    assert created.json()["user"]["model_overrides"] == {
+        "gpt-5.6-luna": "gpt-6-luna",
+        "gpt-5.6-sol": "gpt-6-sol",
+        "gpt-5.6-terra": "gpt-6-sol",
+        "gpt-6-astra": "gpt-6-sol",
+    }
 
     updated = client.put(f"/api/v1/users/{user_id}", headers=admin_headers, json={"name": "alice-2"})
     assert updated.status_code == 200
@@ -197,6 +228,9 @@ def test_user_request_policy_can_be_customized(client, admin_headers):
     options = client.get("/api/v1/users/model-options", headers=admin_headers)
     assert options.status_code == 200, options.text
     assert options.json()["models"] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -280,6 +314,9 @@ def test_refresh_model_options_returns_fixed_catalog_without_upstream_calls(clie
 
     assert response.status_code == 200, response.text
     assert response.json()["models"] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -294,9 +331,9 @@ def test_proxy_requires_user_key(client):
 
 def test_unknown_models_cannot_be_saved_to_user_policy(client, admin_headers):
     for payload in (
-        {"name": "unknown-allowlist", "allowed_models": ["gpt-5.6-sol"]},
-        {"name": "unknown-source", "model_overrides": {"gpt-5.6-sol": "gpt-6-sol"}},
-        {"name": "unknown-target", "model_overrides": {"gpt-6-astra": "gpt-5.6-sol"}},
+        {"name": "unknown-allowlist", "allowed_models": ["gpt-not-real"]},
+        {"name": "unknown-source", "model_overrides": {"gpt-not-real": "gpt-6-sol"}},
+        {"name": "unknown-target", "model_overrides": {"gpt-6-astra": "gpt-not-real"}},
     ):
         assert client.post("/api/v1/users", headers=admin_headers, json=payload).status_code == 422
     created = client.post("/api/v1/users", headers=admin_headers, json={"name": "valid-user"}).json()["user"]
@@ -304,12 +341,17 @@ def test_unknown_models_cannot_be_saved_to_user_policy(client, admin_headers):
         client.put(
             f"/api/v1/users/{created['id']}",
             headers=admin_headers,
-            json={"model_overrides": {"gpt-6-astra": "gpt-5.6-sol"}},
+            json={"model_overrides": {"gpt-6-astra": "gpt-not-real"}},
         ).status_code
         == 422
     )
     stored = client.get("/api/v1/users", headers=admin_headers).json()["users"]
-    assert len(stored) == 1 and stored[0]["model_overrides"] == {"gpt-6-astra": "gpt-6-sol"}
+    assert len(stored) == 1 and stored[0]["model_overrides"] == {
+        "gpt-5.6-luna": "gpt-6-luna",
+        "gpt-5.6-sol": "gpt-6-sol",
+        "gpt-5.6-terra": "gpt-6-sol",
+        "gpt-6-astra": "gpt-6-sol",
+    }
 
 
 @respx.mock
@@ -319,10 +361,10 @@ def test_unknown_models_never_reach_codex_upstream(client, make_user):
     upstream = respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={}))
     headers = {"Authorization": f"Bearer {key}"}
     for path, body in (
-        ("/api/v1/responses", {"model": "gpt-5.6-sol", "input": "hello"}),
+        ("/api/v1/responses", {"model": "gpt-not-real", "input": "hello"}),
         ("/api/v1/responses/compact", {"model": "gpt-5.6", "input": []}),
-        ("/api/v1/alpha/search", {"model": "gpt-5.6-terra", "query": "hello"}),
-        ("/api/v1/chat/completions", {"model": "gpt-5.6-luna", "messages": [{"role": "user", "content": "hello"}]}),
+        ("/api/v1/alpha/search", {"model": "gpt-not-real", "query": "hello"}),
+        ("/api/v1/chat/completions", {"model": "gpt-not-real", "messages": [{"role": "user", "content": "hello"}]}),
     ):
         response = client.post(path, headers=headers, json=body)
         assert response.status_code == 400, (path, response.text)
@@ -458,9 +500,15 @@ def test_weekly_exhaustion_redeems_earliest_credit_and_retries_request(client, s
     from datetime import datetime, timedelta, timezone
     from unittest.mock import patch
 
+    from app.utils.postgres import AccountDb
+    from app.utils.postgres.base import SessionFactory
+
     account_id = seed_account("auto-reset", weekly_used_pct=0.99)
     key = make_user("auto-reset-user")
     now = datetime.now(timezone.utc)
+    with SessionFactory() as db:
+        db.get(AccountDb, account_id).auto_limit_reset_enabled = True
+        db.commit()
     credits = [
         {
             "id": "later",
@@ -550,6 +598,7 @@ def test_already_exhausted_account_redeems_before_selection(client, seed_account
     key = make_user("already-exhausted-user")
     with SessionFactory() as db:
         account = db.get(AccountDb, account_id)
+        account.auto_limit_reset_enabled = True
         account.reset_credits_available = 1
         db.commit()
 
@@ -624,6 +673,9 @@ def test_successful_response_that_reaches_weekly_limit_redeems_without_replaying
 
     account_id = seed_account("success-to-exhausted", weekly_used_pct=0.99)
     key = make_user("success-to-exhausted-user")
+    with SessionFactory() as db:
+        db.get(AccountDb, account_id).auto_limit_reset_enabled = True
+        db.commit()
     respx.route(host="testserver").pass_through()
     upstream = respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
@@ -1252,6 +1304,9 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
     )
     assert response.status_code == 200
     assert [model["slug"] for model in response.json()["models"]] == [
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -1277,6 +1332,9 @@ def test_model_catalog_does_not_probe_pooled_accounts(client, seed_account, make
     response = client.get("/api/v1/models", headers={"Authorization": f"Bearer {key}"})
     assert response.status_code == 200
     assert {model["id"] for model in response.json()["data"]} == {
+        "gpt-5.6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -1400,6 +1458,9 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
     assert response.json() == {
         "object": "list",
         "data": [
+            {"id": "gpt-5.6-luna", "object": "model", "created": 0, "owned_by": "openai"},
+            {"id": "gpt-5.6-sol", "object": "model", "created": 0, "owned_by": "openai"},
+            {"id": "gpt-5.6-terra", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-astra", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-sol", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-luna", "object": "model", "created": 0, "owned_by": "openai"},

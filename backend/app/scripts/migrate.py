@@ -127,7 +127,10 @@ def sync_canonical_schema() -> None:
                 "allowed_models_json": None,
                 "allowed_reasoning_levels_json": '["none","minimal","low","medium","high","xhigh","max"]',
                 "allowed_request_modes_json": '["standard","fast","ultrafast"]',
-                "model_overrides_json": '{"gpt-6-astra":"gpt-6-sol"}',
+                "model_overrides_json": (
+                    '{"gpt-5.6-luna":"gpt-6-luna","gpt-5.6-sol":"gpt-6-sol",'
+                    '"gpt-5.6-terra":"gpt-6-sol","gpt-6-astra":"gpt-6-sol"}'
+                ),
                 "model_reasoning_levels_json": "{}",
                 "model_request_modes_json": "{}",
             }
@@ -183,6 +186,8 @@ def sync_canonical_schema() -> None:
                 connection.execute(text(f"UPDATE accounts SET {column_name} = rotation_threshold WHERE rotation_threshold IS NOT NULL"))
         if "authenticated_override" not in account_columns:
             connection.execute(text("ALTER TABLE accounts ADD COLUMN authenticated_override BOOLEAN NOT NULL DEFAULT FALSE"))
+        if "auto_limit_reset_enabled" not in account_columns:
+            connection.execute(text("ALTER TABLE accounts ADD COLUMN auto_limit_reset_enabled BOOLEAN NOT NULL DEFAULT FALSE"))
         warmup_columns = {
             "warmup_enabled": "BOOLEAN NOT NULL DEFAULT TRUE",
             "warmup_next_at": "TIMESTAMP WITH TIME ZONE",

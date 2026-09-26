@@ -64,6 +64,7 @@ export function SelectMenu({
     className?: string;
 }) {
     const [open, setOpen] = useState(false);
+    const [openUp, setOpenUp] = useState(false);
     const ref = useRef<HTMLDivElement>(null);
     const selected = options.find((option) => option.value === value);
 
@@ -90,7 +91,14 @@ export function SelectMenu({
                 aria-label={ariaLabel}
                 aria-haspopup="listbox"
                 aria-expanded={open}
-                onClick={() => setOpen((current) => !current)}
+                onClick={() => {
+                    setOpenUp(
+                        (ref.current?.getBoundingClientRect().bottom ?? 0) + 290 >
+                            window.innerHeight &&
+                            (ref.current?.getBoundingClientRect().top ?? 0) > 290,
+                    );
+                    setOpen((current) => !current);
+                }}
                 className="border-ink-600 bg-ink-900 text-fog-100 hover:bg-ink-800 focus:border-brand-400 focus:ring-brand-500/25 flex w-full items-center justify-between gap-3 rounded-md border px-3 py-2 text-left text-sm transition-colors outline-none focus:ring-2"
             >
                 <span className="truncate">{selected?.label ?? "Select"}</span>
@@ -102,7 +110,7 @@ export function SelectMenu({
             {open ? (
                 <div
                     role="listbox"
-                    className="border-ink-600 bg-ink-850 absolute top-full right-0 left-0 z-30 mt-1 max-h-72 overflow-y-auto rounded-lg border py-1 shadow-[var(--shadow-pop)]"
+                    className={`border-ink-600 bg-ink-850 absolute right-0 left-0 z-50 max-h-72 overflow-y-auto rounded-lg border py-1 shadow-[var(--shadow-pop)] ${openUp ? "bottom-full mb-1" : "top-full mt-1"}`}
                 >
                     {options.map((option) => {
                         const active = option.value === value;

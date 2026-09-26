@@ -114,6 +114,8 @@ _UPSTREAM_PATHS = {*_RESPONSE_OPERATIONS, _SEARCH_PATH}
 def _recover_exhausted_accounts_with_cached_credits(db: Session) -> None:
     """Restore exhausted accounts before availability filtering hides them."""
     for account in rotation.weekly_reset_recovery_candidates(db):
+        if not account.auto_limit_reset_enabled:
+            continue
         try:
             target = egress.get_pool().resolve(account.egress_target_id)
             access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
@@ -1453,7 +1455,7 @@ async def proxy_search(
         )
         reached_type = body_reached_type or reached_type
         quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
-        if (account.weekly_used_pct or 0) >= 1.0:
+        if account.auto_limit_reset_enabled and (account.weekly_used_pct or 0) >= 1.0:
             try:
                 target = candidate.extensions.get("proxy_egress_target")
                 access_token = rotation.ensure_fresh_token(
@@ -1978,7 +1980,7 @@ async def proxy_responses(
         body_reached_type, body_reset_at = rotation.apply_rate_limit_body(account, rate_limit_body)
         reached_type = body_reached_type or reached_type
         quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
-        if (account.weekly_used_pct or 0) >= 1.0:
+        if account.auto_limit_reset_enabled and (account.weekly_used_pct or 0) >= 1.0:
             try:
                 target = candidate.extensions.get("proxy_egress_target")
                 access_token = rotation.ensure_fresh_token(db, account, egress_target=target)

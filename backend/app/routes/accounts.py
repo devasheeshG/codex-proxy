@@ -502,6 +502,8 @@ def update_account(
         if account.warmup_enabled != request.warmup_enabled:
             account.warmup_next_at = None
         account.warmup_enabled = request.warmup_enabled
+    if request.auto_limit_reset_enabled is not None:
+        account.auto_limit_reset_enabled = request.auto_limit_reset_enabled
     if request.cooldown_seconds is not None:
         account.cooldown_seconds = request.cooldown_seconds
     if request.max_failover_attempts is not None:

@@ -77,7 +77,7 @@ def refresh_once() -> None:
                         account.label,
                         type(exc).__name__,
                     )
-                if (account.weekly_used_pct or 0) >= 1.0:
+                if account.auto_limit_reset_enabled and (account.weekly_used_pct or 0) >= 1.0:
                     redeemed = rotation.auto_redeem_weekly_reset(
                         db,
                         account,
