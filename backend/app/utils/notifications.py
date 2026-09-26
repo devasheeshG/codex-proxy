@@ -299,6 +299,32 @@ EVENTS: dict[str, EventDefinition] = {
         cooldown_seconds=900,
         variables=COMMON_VARIABLES + ("user_name", "limit"),
     ),
+    "user_hourly_rate_limit": EventDefinition(
+        title="User hourly request rate limit exceeded",
+        description="Sent when a user's traffic across all API keys reaches their rolling hourly request limit.",
+        default_template="\n".join(
+            ("⚠️ Proxy user hourly rate limit reached", "", "User: {{ user_name }}", "Limit: {{ limit }} requests/hour", "Detected: {{ event_time }}")
+        ),
+        default_enabled=False,
+        cooldown_seconds=900,
+        variables=COMMON_VARIABLES + ("user_name", "limit"),
+    ),
+    "user_daily_rate_limit": EventDefinition(
+        title="User daily request rate limit exceeded",
+        description="Sent when a user's traffic across all API keys reaches their rolling 24-hour request limit.",
+        default_template="\n".join(
+            (
+                "⚠️ Proxy user daily rate limit reached",
+                "",
+                "User: {{ user_name }}",
+                "Limit: {{ limit }} requests/24 hours",
+                "Detected: {{ event_time }}",
+            )
+        ),
+        default_enabled=False,
+        cooldown_seconds=3600,
+        variables=COMMON_VARIABLES + ("user_name", "limit"),
+    ),
     "user_monthly_budget": EventDefinition(
         title="User monthly token budget exhausted",
         description=(

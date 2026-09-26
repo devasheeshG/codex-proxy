@@ -8,6 +8,7 @@ import json
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Dict, List, Literal, Mapping, Optional, Set, Tuple
 from urllib.parse import urlencode
 
@@ -714,32 +715,44 @@ def _enforce_client_limits(db: Session, key: ApiKeyDb, user: Optional[UserDb]) -
     now = datetime.now(timezone.utc)
     window_start = now - timedelta(seconds=60)
 
-    if user is not None and user.rate_limit_per_minute and user.rate_limit_per_minute > 0:
+    user_windows = (
+        (
+            ("minute", 60, user.rate_limit_per_minute, "user_rate_limit"),
+            ("hour", 3600, user.rate_limit_per_hour, "user_hourly_rate_limit"),
+            ("day", 86400, user.rate_limit_per_day, "user_daily_rate_limit"),
+        )
+        if user is not None
+        else ()
+    )
+    if any(limit and limit > 0 for _, _, limit, _ in user_windows):
         db.execute(text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"), {"lock_key": f"user-rate:{user.id}"})
-        count = (
-            db.query(ProxyEventDb)
-            .filter(
+        for label, seconds, limit, event_type in user_windows:
+            if not limit or limit <= 0:
+                continue
+            recent = db.query(ProxyEventDb).filter(
                 ProxyEventDb.user_id == user.id,
                 ProxyEventDb.event_type == "request.reserved",
-                ProxyEventDb.created_at >= window_start,
+                ProxyEventDb.created_at >= now - timedelta(seconds=seconds),
             )
-            .count()
-        )
-        if count >= user.rate_limit_per_minute:
-            notifications.enqueue_client_limit(
-                db,
-                "user_rate_limit",
-                user_name=user.name,
-                limit=user.rate_limit_per_minute,
-                dedupe_key=str(user.id),
-                dashboard_url=settings.FRONTEND_ORIGIN,
-            )
-            db.commit()
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="User rate limit exceeded; slow down.",
-                headers={"Retry-After": "60"},
-            )
+            count = recent.count()
+            if count >= limit:
+                first_expiring = recent.order_by(ProxyEventDb.created_at.asc()).offset(count - limit).first()
+                remaining = (first_expiring.created_at + timedelta(seconds=seconds) - now).total_seconds() if first_expiring else seconds
+                retry_after = max(1, ceil(remaining))
+                notifications.enqueue_client_limit(
+                    db,
+                    event_type,
+                    user_name=user.name,
+                    limit=limit,
+                    dedupe_key=f"{user.id}:{label}",
+                    dashboard_url=settings.FRONTEND_ORIGIN,
+                )
+                db.commit()
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"User {label} rate limit exceeded; slow down.",
+                    headers={"Retry-After": str(retry_after)},
+                )
     if user is not None and user.monthly_token_budget and user.monthly_token_budget > 0:
         if usage.monthly_token_usage(db, user.id) >= user.monthly_token_budget:
             notifications.enqueue_client_limit(

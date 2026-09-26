@@ -131,6 +131,8 @@ def upgrade() -> None:
         # false, so fresh databases must start with the same safe behavior.
         sa.Column("fallback_enabled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("rate_limit_per_minute", sa.Integer(), nullable=True),
+        sa.Column("rate_limit_per_hour", sa.Integer(), nullable=True),
+        sa.Column("rate_limit_per_day", sa.Integer(), nullable=True),
         sa.Column("monthly_token_budget", sa.BigInteger(), nullable=True),
         sa.Column("lifetime_token_budget", sa.BigInteger(), nullable=True),
         sa.Column("monthly_spend_budget_usd", sa.Float(), nullable=True),

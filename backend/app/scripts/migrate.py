@@ -61,11 +61,15 @@ def sync_canonical_schema() -> None:
         if not inspector.has_table("users"):
             return
         user_columns = {column["name"] for column in inspector.get_columns("users")}
+        needs_preset_backfill = "preset_id" not in user_columns or not inspector.has_table("presets")
+        needs_legacy_policy_backfill = needs_preset_backfill or "allowed_models_json" not in user_columns
         if "allowed_models_json" not in user_columns:
             connection.execute(text("ALTER TABLE users ADD COLUMN allowed_models_json TEXT"))
         user_policy_columns = {
             "priority": "INTEGER NOT NULL DEFAULT 1",
             "fallback_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
+            "rate_limit_per_hour": "INTEGER",
+            "rate_limit_per_day": "INTEGER",
             "lifetime_token_budget": "BIGINT",
             "monthly_spend_budget_usd": "DOUBLE PRECISION",
             "lifetime_spend_budget_usd": "DOUBLE PRECISION",
@@ -86,30 +90,32 @@ def sync_canonical_schema() -> None:
         # Revision 006 granted the built-in auto-review model to every
         # restricted user. Preserve that data migration for databases that
         # were stamped from an earlier historical head before the squash.
-        for row in connection.execute(text("SELECT id, allowed_models_json FROM users WHERE allowed_models_json IS NOT NULL")).mappings():
-            try:
-                values = json.loads(row["allowed_models_json"])
-            except (TypeError, ValueError):
-                continue
-            if not isinstance(values, list):
-                continue
-            normalized = {str(value).strip().lower() for value in values if isinstance(value, str) and value.strip()}
-            if "codex-auto-review" not in normalized:
-                normalized.add("codex-auto-review")
-                connection.execute(
-                    text("UPDATE users SET allowed_models_json = :models WHERE id = :user_id"),
-                    {"models": json.dumps(sorted(normalized), separators=(",", ":")), "user_id": row["id"]},
-                )
+        if needs_legacy_policy_backfill:
+            for row in connection.execute(text("SELECT id, allowed_models_json FROM users WHERE allowed_models_json IS NOT NULL")).mappings():
+                try:
+                    values = json.loads(row["allowed_models_json"])
+                except (TypeError, ValueError):
+                    continue
+                if not isinstance(values, list):
+                    continue
+                normalized = {str(value).strip().lower() for value in values if isinstance(value, str) and value.strip()}
+                if "codex-auto-review" not in normalized:
+                    normalized.add("codex-auto-review")
+                    connection.execute(
+                        text("UPDATE users SET allowed_models_json = :models WHERE id = :user_id"),
+                        {"models": json.dumps(sorted(normalized), separators=(",", ":")), "user_id": row["id"]},
+                    )
         # Before UltraFast existed, selecting both available modes represented
         # unrestricted request-mode access. Preserve that intent for existing
         # users while leaving every narrower policy unchanged.
-        connection.execute(
-            text(
-                "UPDATE users SET allowed_request_modes_json = "
-                '\'["standard","fast","ultrafast"]\' '
-                'WHERE allowed_request_modes_json::jsonb = \'["standard","fast"]\'::jsonb'
+        if needs_legacy_policy_backfill:
+            connection.execute(
+                text(
+                    "UPDATE users SET allowed_request_modes_json = "
+                    '\'["standard","fast","ultrafast"]\' '
+                    'WHERE allowed_request_modes_json::jsonb = \'["standard","fast"]\'::jsonb'
+                )
             )
-        )
         connection.execute(text('ALTER TABLE users ALTER COLUMN allowed_request_modes_json SET DEFAULT \'["standard","fast","ultrafast"]\''))
         PresetDb.__table__.create(connection, checkfirst=True)
         preset_fields = (
@@ -149,12 +155,15 @@ def sync_canonical_schema() -> None:
             baseline = (
                 connection.execute(text(f"SELECT {', '.join(preset_fields)} FROM presets WHERE id = :id"), {"id": existing_preset}).mappings().one()
             )
-        for row in connection.execute(text(f"SELECT id, {', '.join(preset_fields)} FROM users WHERE preset_id IS NULL")).mappings():
-            overrides = [field.removesuffix("_json") for field in preset_fields if row[field] != baseline[field]]
-            connection.execute(
-                text("UPDATE users SET preset_id = :preset_id, preset_overrides_json = :overrides WHERE id = :id"),
-                {"preset_id": existing_preset, "overrides": json.dumps(overrides), "id": row["id"]},
-            )
+        # Only backfill a legacy schema once. A NULL preset_id on an already-migrated
+        # schema is an intentional direct user policy and must survive restarts.
+        if needs_preset_backfill:
+            for row in connection.execute(text(f"SELECT id, {', '.join(preset_fields)} FROM users WHERE preset_id IS NULL")).mappings():
+                overrides = [field.removesuffix("_json") for field in preset_fields if row[field] != baseline[field]]
+                connection.execute(
+                    text("UPDATE users SET preset_id = :preset_id, preset_overrides_json = :overrides WHERE id = :id"),
+                    {"preset_id": existing_preset, "overrides": json.dumps(overrides), "id": row["id"]},
+                )
 
         # Existing installations are already stamped at the squashed 001 head,
         # so additive fields introduced after the squash must be reconciled

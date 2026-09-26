@@ -229,6 +229,8 @@ def create_user(
         priority=request.priority,
         fallback_enabled=request.fallback_enabled,
         rate_limit_per_minute=request.rate_limit_per_minute,
+        rate_limit_per_hour=request.rate_limit_per_hour,
+        rate_limit_per_day=request.rate_limit_per_day,
         monthly_token_budget=request.monthly_token_budget,
         lifetime_token_budget=request.lifetime_token_budget,
         monthly_spend_budget_usd=request.monthly_spend_budget_usd,
@@ -247,11 +249,12 @@ def create_user(
         model_request_modes_json=json.dumps(request.model_request_modes, separators=(",", ":")),
         created_at=datetime.now(timezone.utc),
     )
-    selected_preset = (
-        db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
-        if request.preset_id
-        else db.query(PresetDb).order_by(PresetDb.created_at).first()
-    )
+    if request.preset_id:
+        selected_preset = db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
+    elif "preset_id" in request.model_fields_set:
+        selected_preset = None
+    else:
+        selected_preset = db.query(PresetDb).order_by(PresetDb.created_at).first()
     if request.preset_id and selected_preset is None:
         raise HTTPException(status_code=404, detail="Preset not found")
     if selected_preset:
@@ -291,11 +294,15 @@ def update_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    if request.preset_id is not None:
-        preset = db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
-        if preset is None:
-            raise HTTPException(status_code=404, detail="Preset not found")
-        presets.apply_preset(user, preset, preserve_overrides=False)
+    if "preset_id" in request.model_fields_set:
+        if request.preset_id is None:
+            user.preset_id = None
+            presets.set_overridden_fields(user, set())
+        else:
+            preset = db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
+            if preset is None:
+                raise HTTPException(status_code=404, detail="Preset not found")
+            presets.apply_preset(user, preset, preserve_overrides=False)
     elif request.clear_preset_overrides:
         preset = db.query(PresetDb).filter(PresetDb.id == user.preset_id).first()
         if preset is None:
@@ -318,6 +325,10 @@ def update_user(
         user.fallback_enabled = request.fallback_enabled
     if request.rate_limit_per_minute is not None:
         user.rate_limit_per_minute = request.rate_limit_per_minute
+    if request.rate_limit_per_hour is not None:
+        user.rate_limit_per_hour = request.rate_limit_per_hour
+    if request.rate_limit_per_day is not None:
+        user.rate_limit_per_day = request.rate_limit_per_day
     if request.monthly_token_budget is not None:
         user.monthly_token_budget = request.monthly_token_budget
     if request.lifetime_token_budget is not None:

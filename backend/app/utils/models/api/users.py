@@ -69,6 +69,8 @@ class User(BaseModel):
     fallback_enabled: bool
     key_count: int
     rate_limit_per_minute: Optional[int]  # requests/min across all the user's keys; null/0 = unlimited
+    rate_limit_per_hour: Optional[int]  # requests/hour across all keys; null/0 = unlimited
+    rate_limit_per_day: Optional[int]  # requests/24 hours across all keys; null/0 = unlimited
     monthly_token_budget: Optional[int]  # tokens/calendar month across all the user's keys; null/0 = unlimited
     lifetime_token_budget: Optional[int]  # one-time token cap across the user's entire retained history
     monthly_spend_budget_usd: Optional[float]
@@ -110,6 +112,8 @@ class User(BaseModel):
             fallback_enabled=user_db.fallback_enabled,
             key_count=key_count,
             rate_limit_per_minute=user_db.rate_limit_per_minute,
+            rate_limit_per_hour=user_db.rate_limit_per_hour,
+            rate_limit_per_day=user_db.rate_limit_per_day,
             monthly_token_budget=user_db.monthly_token_budget,
             lifetime_token_budget=user_db.lifetime_token_budget,
             monthly_spend_budget_usd=user_db.monthly_spend_budget_usd,
@@ -204,7 +208,9 @@ class CreateUserRequest(BaseModel):
     name: str
     priority: int = Field(default=1, ge=1, le=1000)
     fallback_enabled: bool = False
-    rate_limit_per_minute: Optional[int] = None  # requests/min across all the user's keys; null/0 = unlimited
+    rate_limit_per_minute: Optional[int] = Field(default=None, ge=0)  # null/0 = unlimited
+    rate_limit_per_hour: Optional[int] = Field(default=None, ge=0)
+    rate_limit_per_day: Optional[int] = Field(default=None, ge=0)
     monthly_token_budget: Optional[int] = Field(default=None, ge=0)
     lifetime_token_budget: Optional[int] = Field(default=None, ge=0)
     monthly_spend_budget_usd: Optional[float] = Field(default=None, ge=0, le=10_000_000)
@@ -269,7 +275,9 @@ class UpdateUserRequest(BaseModel):
     active: Optional[bool] = None
     priority: Optional[int] = Field(default=None, ge=1, le=1000)
     fallback_enabled: Optional[bool] = None
-    rate_limit_per_minute: Optional[int] = None
+    rate_limit_per_minute: Optional[int] = Field(default=None, ge=0)
+    rate_limit_per_hour: Optional[int] = Field(default=None, ge=0)
+    rate_limit_per_day: Optional[int] = Field(default=None, ge=0)
     monthly_token_budget: Optional[int] = Field(default=None, ge=0)
     lifetime_token_budget: Optional[int] = Field(default=None, ge=0)
     monthly_spend_budget_usd: Optional[float] = Field(default=None, ge=0, le=10_000_000)

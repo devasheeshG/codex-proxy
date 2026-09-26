@@ -143,6 +143,8 @@ class UserDb(DatabaseBase):
     # max requests/min across ALL of this user's keys; unlike keys (where null = global default), users have NO
     # global default -- null/0 = no user-level cap (unlimited).
     rate_limit_per_minute = Column(Integer, nullable=True)
+    rate_limit_per_hour = Column(Integer, nullable=True)
+    rate_limit_per_day = Column(Integer, nullable=True)
     # token cap per calendar month across all the user's keys; null/0 = unlimited (no global default for users).
     monthly_token_budget = Column(BigInteger, nullable=True)
     # Lifetime (one-time) cap. Unlike the monthly budget this never resets.

@@ -98,7 +98,7 @@ def test_gpt_5_6_alias_cannot_be_rewrite_target(client, admin_headers):
     assert response.status_code == 422
 
 
-def test_preset_migration_preserves_existing_user_policies(client, admin_headers):
+def test_schema_sync_preserves_users_without_a_preset(client, admin_headers):
     from app.scripts.migrate import sync_canonical_schema
 
     first = client.post("/api/v1/users", headers=admin_headers, json={"name": "first", "allowed_request_modes": ["standard"]})
@@ -109,8 +109,8 @@ def test_preset_migration_preserves_existing_user_policies(client, admin_headers
     presets = client.get("/api/v1/presets", headers=admin_headers).json()["presets"]
     assert len(presets) == 1 and presets[0]["name"] == "Current configuration"
     assert {user["name"]: user["allowed_request_modes"] for user in users} == {"first": ["standard"], "second": ["fast"]}
-    assert all(user["preset_id"] == presets[0]["id"] for user in users)
-    assert sum("allowed_request_modes" in user["preset_overrides"] for user in users) == 1
+    assert all(user["preset_id"] is None for user in users)
+    assert all(user["preset_overrides"] == [] for user in users)
 
 
 def test_per_model_request_mode_from_preset_is_enforced(client, admin_headers):
@@ -2406,20 +2406,115 @@ def test_user_limits_crud(client, admin_headers):
     created = client.post(
         "/api/v1/users",
         headers=admin_headers,
-        json={"name": "niaj", "rate_limit_per_minute": 30, "monthly_token_budget": 1000},
+        json={
+            "name": "niaj",
+            "rate_limit_per_minute": 30,
+            "rate_limit_per_hour": 120,
+            "rate_limit_per_day": 1000,
+            "monthly_token_budget": 1000,
+        },
     ).json()["user"]
     assert created["rate_limit_per_minute"] == 30
+    assert created["rate_limit_per_hour"] == 120
+    assert created["rate_limit_per_day"] == 1000
     assert created["monthly_token_budget"] == 1000
 
     user_id = created["id"]
     client.put(
         f"/api/v1/users/{user_id}",
         headers=admin_headers,
-        json={"rate_limit_per_minute": 0, "monthly_token_budget": 2000},
+        json={"rate_limit_per_minute": 0, "rate_limit_per_hour": 0, "rate_limit_per_day": 0, "monthly_token_budget": 2000},
     )
     user = client.get("/api/v1/users", headers=admin_headers).json()["users"][0]
     assert user["rate_limit_per_minute"] == 0
+    assert user["rate_limit_per_hour"] == 0
+    assert user["rate_limit_per_day"] == 0
     assert user["monthly_token_budget"] == 2000
+
+
+def test_user_can_override_preset_models_and_rewrites(client, admin_headers):
+    preset = client.post(
+        "/api/v1/presets",
+        headers=admin_headers,
+        json={"name": "Restricted", "allowed_models": ["gpt-6-sol"]},
+    ).json()
+    user = client.post("/api/v1/users", headers=admin_headers, json={"name": "override-user", "preset_id": preset["id"]}).json()["user"]
+    rewrites = {"gpt-6-sol": "gpt-6-luna"}
+    updated = client.put(
+        f"/api/v1/users/{user['id']}",
+        headers=admin_headers,
+        json={"allowed_models": ["gpt-6-luna"], "model_overrides": rewrites},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["user"]["allowed_models"] == ["gpt-6-luna"]
+    assert updated.json()["user"]["model_overrides"] == rewrites
+    assert set(updated.json()["user"]["preset_overrides"]) == {"allowed_models", "model_overrides"}
+
+
+def test_user_can_create_without_preset_and_detach_preserving_policy(client, admin_headers):
+    preset = client.post("/api/v1/presets", headers=admin_headers, json={"name": "Baseline"}).json()
+    created = client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={"name": "direct-policy", "preset_id": None, "allowed_models": ["gpt-6-sol"]},
+    )
+    assert created.status_code == 201, created.text
+    user = created.json()["user"]
+    assert user["preset_id"] is None
+    assert user["allowed_models"] == ["gpt-6-sol"]
+
+    path = f"/api/v1/users/{user['id']}"
+    assigned = client.put(path, headers=admin_headers, json={"preset_id": preset["id"]})
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["user"]["preset_id"] == preset["id"]
+    detached = client.put(
+        path,
+        headers=admin_headers,
+        json={"preset_id": None, "allowed_models": ["gpt-6-luna"]},
+    )
+    assert detached.status_code == 200, detached.text
+    assert detached.json()["user"]["preset_id"] is None
+    assert detached.json()["user"]["preset_overrides"] == []
+    assert detached.json()["user"]["allowed_models"] == ["gpt-6-luna"]
+    from app.scripts.migrate import sync_canonical_schema
+
+    sync_canonical_schema()
+    after_restart = client.get("/api/v1/users", headers=admin_headers).json()["users"][0]
+    assert after_restart["preset_id"] is None
+    assert after_restart["allowed_models"] == ["gpt-6-luna"]
+
+
+@respx.mock
+def test_user_hourly_and_daily_rate_limits_across_keys(client, admin_headers, seed_account):
+    seed_account("a1")
+    respx.route(host="testserver").pass_through()
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    for field, expected_window in (("rate_limit_per_hour", 3600), ("rate_limit_per_day", 86400)):
+        user = client.post("/api/v1/users", headers=admin_headers, json={"name": field, field: 1}).json()["user"]
+        first_key = client.post(f"/api/v1/users/{user['id']}/keys", headers=admin_headers, json={"label": "first"}).json()["secret"]
+        second_key = client.post(f"/api/v1/users/{user['id']}/keys", headers=admin_headers, json={"label": "second"}).json()["secret"]
+        first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {first_key}"}, json={"model": "gpt-6-sol"})
+        assert first.status_code == 200, first.text
+        blocked = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {second_key}"}, json={"model": "gpt-6-sol"})
+        assert blocked.status_code == 429, blocked.text
+        assert 1 <= int(blocked.headers["Retry-After"]) <= expected_window
+        from datetime import datetime, timedelta, timezone
+
+        from app.utils.postgres import ProxyEventDb
+        from app.utils.postgres.base import SessionFactory
+
+        with SessionFactory() as db:
+            db.query(ProxyEventDb).filter(
+                ProxyEventDb.user_id == uuid.UUID(user["id"]),
+                ProxyEventDb.event_type == "request.reserved",
+            ).update({"created_at": datetime.now(timezone.utc) - timedelta(seconds=expected_window + 5)})
+            db.commit()
+        after_window = client.post(
+            "/api/v1/responses",
+            headers={"Authorization": f"Bearer {second_key}"},
+            json={"model": "gpt-6-sol"},
+        )
+        assert after_window.status_code == 200, after_window.text
 
 
 @respx.mock
