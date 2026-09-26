@@ -128,8 +128,7 @@ def sync_canonical_schema() -> None:
                 "allowed_reasoning_levels_json": '["none","minimal","low","medium","high","xhigh","max"]',
                 "allowed_request_modes_json": '["standard","fast","ultrafast"]',
                 "model_overrides_json": (
-                    '{"gpt-5.6-luna":"gpt-6-luna","gpt-5.6-sol":"gpt-6-sol",'
-                    '"gpt-5.6-terra":"gpt-6-sol","gpt-6-astra":"gpt-6-sol"}'
+                    '{"gpt-5.6-luna":"gpt-6-luna","gpt-5.6-sol":"gpt-6-sol","gpt-5.6-terra":"gpt-6-sol","gpt-6-astra":"gpt-6-sol"}'
                 ),
                 "model_reasoning_levels_json": "{}",
                 "model_request_modes_json": "{}",
