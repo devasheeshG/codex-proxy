@@ -896,7 +896,9 @@ function QuotaAverageCell({
 }) {
     const percentage = Math.max(0, Math.min(100, usedPct));
     return (
-        <div className={`p-5 sm:p-6 ${divided ? "border-ink-700 border-t md:border-t-0 md:border-l" : ""}`}>
+        <div
+            className={`p-5 sm:p-6 ${divided ? "border-ink-700 border-t md:border-t-0 md:border-l" : ""}`}
+        >
             <div className="text-fog-400 text-[11px] font-medium tracking-wider uppercase">
                 {label}
             </div>

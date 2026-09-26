@@ -180,14 +180,15 @@ the save operation is atomic.
 
 The Users page also manages reusable policy presets. A preset defines allowed
 models, global request modes and reasoning levels, exact model rewrites, and
-optional per-model request modes/reasoning levels. Assign one preset to each
-user; editing it updates inherited fields across its users. A user can override
-individual policy fields, and each override can be reset to the preset. New and
-upgraded installations create a **Current configuration** preset and assign
-existing users without changing their effective policies.
-The Edit User dialog places preset selection after usage budgets. Preset-owned
-model access and rewrites are managed in the preset; user-specific thinking
-and request-mode overrides appear only when explicitly enabled.
+optional per-model request modes/reasoning levels. A user may select a preset
+or **No preset**. With a preset, edits to individual policy fields—including
+allowed models and model rewrites—are explicit overrides; other fields stay
+inherited. With no preset, the entire policy is edited directly. Switching to
+No preset preserves the current effective policy across restarts. Upgraded
+installations create a **Current configuration** preset and assign existing
+users without changing their effective policies. User-wide request limits can
+be set independently per minute, rolling hour, and rolling 24 hours; they
+apply across all of the user's API keys. Zero or blank disables a limit.
 
 ### Events and request history
 

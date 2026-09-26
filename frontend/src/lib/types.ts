@@ -422,6 +422,8 @@ export interface User {
     key_count: number;
     // requests/min across all the user's keys; null/0 = no user-level cap.
     rate_limit_per_minute: number | null;
+    rate_limit_per_hour: number | null;
+    rate_limit_per_day: number | null;
     // tokens/calendar month across all the user's keys; null/0 = unlimited.
     monthly_token_budget: number | null;
     // One-time cap across the user's retained usage history.

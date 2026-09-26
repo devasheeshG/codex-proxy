@@ -27,7 +27,7 @@ function Chips<T extends string>({
             {values.map((value) => (
                 <label
                     key={value}
-                    className={`border-ink-700 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs capitalize transition-colors ${selected.includes(value) ? "bg-brand-500/15 border-brand-500/60 text-brand-300" : "bg-ink-900 text-fog-400 hover:border-ink-500 hover:text-fog-100"}`}
+                    className={`border-ink-700 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${selected.includes(value) ? "bg-brand-500/15 border-brand-500/60 text-brand-300" : "bg-ink-900 text-fog-400 hover:border-ink-500 hover:text-fog-100"}`}
                 >
                     <input
                         type="checkbox"
@@ -38,6 +38,104 @@ function Chips<T extends string>({
                     {value === "ultrafast" ? "UltraFast" : value}
                 </label>
             ))}
+        </div>
+    );
+}
+
+export function ModelAccessEditor({
+    models,
+    value,
+    onChange,
+}: {
+    models: string[];
+    value: string[] | null;
+    onChange: (value: string[] | null) => void;
+}) {
+    return (
+        <div className="space-y-3">
+            <label className="text-fog-200 flex items-center gap-2 text-sm">
+                <input
+                    type="checkbox"
+                    checked={value === null}
+                    onChange={(event) => onChange(event.target.checked ? null : models.slice(0, 1))}
+                    className="accent-brand-500 h-4 w-4"
+                />
+                Allow every configured model
+            </label>
+            {value !== null && <Chips values={models} selected={value} onChange={onChange} />}
+        </div>
+    );
+}
+
+export function ModelRewritesEditor({
+    models,
+    value,
+    onChange,
+    targetModels = models,
+}: {
+    models: string[];
+    value: Record<string, string>;
+    onChange: (value: Record<string, string>) => void;
+    targetModels?: string[];
+}) {
+    const [source, setSource] = useState("");
+    const [target, setTarget] = useState("");
+    return (
+        <div className="space-y-2">
+            {Object.entries(value).map(([from, to]) => (
+                <div
+                    key={from}
+                    className="border-ink-700 flex items-center gap-2 rounded border p-2 text-xs"
+                >
+                    <code className="min-w-0 flex-1 break-all">
+                        {from} → {to}
+                    </code>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            const next = { ...value };
+                            delete next[from];
+                            onChange(next);
+                        }}
+                        aria-label={`Remove ${from} rewrite`}
+                        className="text-bad-500 hover:bg-bad-500/10 rounded p-1 transition-colors"
+                    >
+                        <Trash2 size={14} />
+                    </button>
+                </div>
+            ))}
+            <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+                <SelectMenu
+                    value={source}
+                    onChange={setSource}
+                    ariaLabel="Rewrite source"
+                    options={[
+                        { value: "", label: "Source model…" },
+                        ...models.map((model) => ({ value: model, label: model })),
+                    ]}
+                />
+                <SelectMenu
+                    value={target}
+                    onChange={setTarget}
+                    ariaLabel="Rewrite target"
+                    options={[
+                        { value: "", label: "Target model…" },
+                        ...targetModels.map((model) => ({ value: model, label: model })),
+                    ]}
+                />
+                <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={!source || !target || source === target}
+                    onClick={() => {
+                        onChange({ ...value, [source]: target });
+                        setSource("");
+                        setTarget("");
+                    }}
+                >
+                    Add
+                </Button>
+            </div>
         </div>
     );
 }
@@ -226,11 +324,9 @@ function PresetModal({
                         placeholder="e.g. Standard access"
                     />
                 </Field>
-                <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
-                    <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
-                        Model access
-                    </summary>
-                    <div className="border-ink-700 space-y-3 border-t p-4">
+                <section className="space-y-3">
+                    <h3 className="text-fog-200 text-sm font-medium">Model access</h3>
+                    <div className="space-y-3">
                         <label className="text-fog-200 flex items-center gap-2 text-sm">
                             <input
                                 type="checkbox"
@@ -249,12 +345,10 @@ function PresetModal({
                             </div>
                         )}
                     </div>
-                </details>
-                <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
-                    <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
-                        Global request policy
-                    </summary>
-                    <div className="border-ink-700 grid gap-5 border-t p-4 md:grid-cols-2">
+                </section>
+                <section className="space-y-3">
+                    <h3 className="text-fog-200 text-sm font-medium">Global request policy</h3>
+                    <div className="grid gap-5 md:grid-cols-2">
                         <Field label="Allowed thinking levels">
                             <label className="text-fog-200 mb-3 flex items-center gap-2 text-sm">
                                 <input
@@ -295,13 +389,13 @@ function PresetModal({
                             <Chips values={MODES} selected={modes} onChange={setModes} />
                         </Field>
                     </div>
-                </details>
+                </section>
                 {!useGlobalThinking && (
-                    <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
-                        <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
+                    <section className="space-y-3">
+                        <h3 className="text-fog-200 text-sm font-medium">
                             Thinking levels by model
-                        </summary>
-                        <div className="border-ink-700 grid gap-3 border-t p-4 sm:grid-cols-2">
+                        </h3>
+                        <div className="grid gap-3 sm:grid-cols-2">
                             {selectedModels.map((model) => (
                                 <div
                                     key={model}
@@ -320,13 +414,11 @@ function PresetModal({
                                 </div>
                             ))}
                         </div>
-                    </details>
+                    </section>
                 )}
-                <details open className="border-ink-700 bg-ink-950/25 rounded-lg border">
-                    <summary className="text-fog-100 cursor-pointer px-4 py-3 text-sm font-semibold">
-                        Model rewrites
-                    </summary>
-                    <div className="border-ink-700 space-y-2 border-t p-4">
+                <section className="space-y-3">
+                    <h3 className="text-fog-200 text-sm font-medium">Model rewrites</h3>
+                    <div className="space-y-2">
                         <p className="text-fog-400 text-xs">
                             Use exact model IDs. The client-facing source must also be allowed
                             above.
@@ -388,7 +480,7 @@ function PresetModal({
                             </Button>
                         </div>
                     </div>
-                </details>
+                </section>
                 <Field
                     label="Per-model thinking and mode rules"
                     hint="Optional narrower limits for each model; requests must satisfy both the global and model rule."

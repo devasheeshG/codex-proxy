@@ -544,6 +544,8 @@ export const api = {
             priority?: number;
             fallback_enabled?: boolean;
             rate_limit_per_minute?: number | null;
+            rate_limit_per_hour?: number | null;
+            rate_limit_per_day?: number | null;
             monthly_token_budget?: number | null;
             lifetime_token_budget?: number | null;
             monthly_spend_budget_usd?: number | null;
@@ -552,7 +554,7 @@ export const api = {
             allowed_reasoning_levels?: ReasoningLevel[];
             allowed_models?: string[] | null;
             model_overrides?: Record<string, string>;
-            preset_id?: string;
+            preset_id?: string | null;
             model_reasoning_levels?: Record<string, ReasoningLevel[]>;
             model_request_modes?: Record<string, RequestMode[]>;
         } = {},
@@ -564,6 +566,8 @@ export const api = {
                 priority: opts.priority ?? 1,
                 fallback_enabled: opts.fallback_enabled ?? false,
                 rate_limit_per_minute: opts.rate_limit_per_minute ?? null,
+                rate_limit_per_hour: opts.rate_limit_per_hour ?? null,
+                rate_limit_per_day: opts.rate_limit_per_day ?? null,
                 monthly_token_budget: opts.monthly_token_budget ?? null,
                 lifetime_token_budget: opts.lifetime_token_budget ?? null,
                 monthly_spend_budget_usd: opts.monthly_spend_budget_usd ?? null,
@@ -583,12 +587,14 @@ export const api = {
         id: string,
         patch: {
             name?: string;
-            preset_id?: string;
+            preset_id?: string | null;
             clear_preset_overrides?: string[];
             active?: boolean;
             priority?: number;
             fallback_enabled?: boolean;
             rate_limit_per_minute?: number;
+            rate_limit_per_hour?: number;
+            rate_limit_per_day?: number;
             monthly_token_budget?: number;
             lifetime_token_budget?: number;
             monthly_spend_budget_usd?: number;
