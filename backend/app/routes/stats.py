@@ -157,11 +157,10 @@ def overview(
     # including accounts in a temporary cooldown. Immediate routing eligibility is
     # reported separately through usable_accounts.
     active_accounts = [
-        account
-        for account in accounts
-        if account.status != AccountStatus.DISABLED and account.provider_health != ProviderHealth.REAUTH_REQUIRED
+        account for account in accounts if account.status != AccountStatus.DISABLED and account.provider_health != ProviderHealth.REAUTH_REQUIRED
     ]
     usable_accounts = [account for account in accounts if rotation.is_usable(account, now)]
+
     def average_window_pct(field: str) -> float:
         values = [getattr(account, field) for account in active_accounts if getattr(account, field) is not None]
         return round(sum(values) / len(values) * 100.0, 2) if values else 0.0
