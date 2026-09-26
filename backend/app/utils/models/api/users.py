@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -10,6 +11,7 @@ from typing import Dict, List, Optional
 from fastapi import Query
 from pydantic import BaseModel, Field, field_validator
 
+from app.model_catalog import configured_model_ids
 from app.utils import request_policy
 
 
@@ -20,7 +22,11 @@ def _normalize_model_values(values):
         return values
     if any(not isinstance(value, str) or not value.strip() for value in values):
         raise ValueError("Model IDs must be non-empty strings")
-    return request_policy.normalize_model_ids(values)
+    normalized = request_policy.normalize_model_ids(values)
+    invalid = sorted(set(normalized) - set(configured_model_ids()))
+    if invalid:
+        raise ValueError(f"Unknown model IDs: {', '.join(invalid)}")
+    return normalized
 
 
 def _normalize_model_overrides(values):
@@ -33,6 +39,21 @@ def _normalize_model_overrides(values):
     normalized = request_policy.normalize_model_overrides(values)
     if len(normalized) != len(values):
         raise ValueError("Model overrides must use unique model IDs and cannot map a model to itself")
+    invalid = sorted((set(normalized) | set(normalized.values())) - set(configured_model_ids()))
+    if invalid:
+        raise ValueError(f"Unknown model IDs: {', '.join(invalid)}")
+    return normalized
+
+
+def _normalize_model_matrix(values, allowed):
+    if not isinstance(values, dict):
+        return values
+    normalized = {}
+    for model, choices in values.items():
+        name = _normalize_model_values([model])[0]
+        if not isinstance(choices, list) or not choices or any(choice not in allowed for choice in choices):
+            raise ValueError(f"Invalid choices for model {model}")
+        normalized[name] = list(dict.fromkeys(choices))
     return normalized
 
 
@@ -54,6 +75,10 @@ class User(BaseModel):
     allowed_reasoning_levels: List[request_policy.ReasoningLevel]
     allowed_models: Optional[List[str]]  # null = all current and future models
     model_overrides: Dict[str, str]
+    preset_id: Optional[uuid.UUID]
+    preset_overrides: List[str]
+    model_reasoning_levels: Dict[str, List[request_policy.ReasoningLevel]]
+    model_request_modes: Dict[str, List[request_policy.RequestMode]]
     last_used_at: Optional[datetime]
     created_at: datetime
     total_tokens: int
@@ -97,6 +122,10 @@ class User(BaseModel):
             ),
             allowed_models=request_policy.decode_models(user_db.allowed_models_json),
             model_overrides=request_policy.decode_model_overrides(user_db.model_overrides_json),
+            preset_id=user_db.preset_id,
+            preset_overrides=json.loads(user_db.preset_overrides_json or "[]"),
+            model_reasoning_levels=json.loads(user_db.model_reasoning_levels_json or "{}"),
+            model_request_modes=json.loads(user_db.model_request_modes_json or "{}"),
             last_used_at=user_db.last_used_at,
             created_at=user_db.created_at,
             total_tokens=total_tokens,
@@ -187,7 +216,10 @@ class CreateUserRequest(BaseModel):
         min_length=1,
     )
     allowed_models: Optional[List[str]] = Field(default=None, min_length=1)
-    model_overrides: Dict[str, str] = Field(default_factory=dict)
+    model_overrides: Dict[str, str] = Field(default_factory=lambda: {"gpt-6-astra": "gpt-6-sol"})
+    preset_id: Optional[uuid.UUID] = None
+    model_reasoning_levels: Dict[str, List[request_policy.ReasoningLevel]] = Field(default_factory=dict)
+    model_request_modes: Dict[str, List[request_policy.RequestMode]] = Field(default_factory=dict)
 
     @field_validator("allowed_request_modes", "allowed_reasoning_levels", mode="before")
     @classmethod
@@ -205,6 +237,16 @@ class CreateUserRequest(BaseModel):
     @classmethod
     def normalize_overrides(cls, values):
         return _normalize_model_overrides(values)
+
+    @field_validator("model_reasoning_levels", mode="before")
+    @classmethod
+    def normalize_reasoning_matrix(cls, values):
+        return _normalize_model_matrix(values, request_policy.ALL_REASONING_LEVELS)
+
+    @field_validator("model_request_modes", mode="before")
+    @classmethod
+    def normalize_mode_matrix(cls, values):
+        return _normalize_model_matrix(values, request_policy.ALL_REQUEST_MODES)
 
 
 # PUT /users/{user_id}
@@ -225,6 +267,8 @@ class UpdateUserRequest(BaseModel):
     allowed_reasoning_levels: Optional[List[request_policy.ReasoningLevel]] = Field(default=None, min_length=1)
     allowed_models: Optional[List[str]] = Field(default=None, min_length=1)
     model_overrides: Optional[Dict[str, str]] = None
+    model_reasoning_levels: Optional[Dict[str, List[request_policy.ReasoningLevel]]] = None
+    model_request_modes: Optional[Dict[str, List[request_policy.RequestMode]]] = None
 
     @field_validator("allowed_request_modes", "allowed_reasoning_levels", mode="before")
     @classmethod
@@ -242,6 +286,16 @@ class UpdateUserRequest(BaseModel):
     @classmethod
     def normalize_overrides(cls, values):
         return _normalize_model_overrides(values)
+
+    @field_validator("model_reasoning_levels", mode="before")
+    @classmethod
+    def normalize_reasoning_matrix(cls, values):
+        return _normalize_model_matrix(values, request_policy.ALL_REASONING_LEVELS)
+
+    @field_validator("model_request_modes", mode="before")
+    @classmethod
+    def normalize_mode_matrix(cls, values):
+        return _normalize_model_matrix(values, request_policy.ALL_REQUEST_MODES)
 
 
 class UserResponse(BaseModel):

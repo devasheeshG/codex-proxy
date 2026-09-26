@@ -174,6 +174,14 @@ rewrites, API-key count, all-time and current-month tokens/spend, and configured
 budgets. Drag-and-drop lanes and bulk assignment make priority changes explicit;
 the save operation is atomic.
 
+The Users page also manages reusable policy presets. A preset defines allowed
+models, global request modes and reasoning levels, exact model rewrites, and
+optional per-model request modes/reasoning levels. Assign one preset to each
+user; editing it updates inherited fields across its users. A user can override
+individual policy fields, and each override can be reset to the preset. New and
+upgraded installations create a **Current configuration** preset and assign
+existing users without changing their effective policies.
+
 ### Events and request history
 
 ![Events dashboard](docs/screenshots/events.png)

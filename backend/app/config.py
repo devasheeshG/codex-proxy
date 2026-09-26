@@ -93,7 +93,7 @@ class Settings(BaseSettings):
     WARMUP_ENABLED: bool = True
     WARMUP_TRIGGER_POOL_USAGE_PCT: float = 0.10
     WARMUP_WEEKLY_RESERVE_PCT: float = 0.90
-    WARMUP_MODEL: str = "gpt-5.6-luna"
+    WARMUP_MODEL: str = "gpt-6-luna"
     # Comma-separated local model allowlist. Blank keeps the built-in lineup.
     ALLOWED_MODELS: str = ""
     DEFAULT_KEY_RATE_LIMIT_PER_MINUTE: int = 0

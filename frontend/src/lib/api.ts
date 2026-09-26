@@ -35,6 +35,7 @@ import {
     DashboardMember,
     UserLookup,
     User,
+    Preset,
 } from "./types";
 
 // Serialise filter params (range bounds + optional user) to query params,
@@ -504,6 +505,32 @@ export const api = {
         const res = await request<{ models: string[] }>("/v1/users/model-options");
         return res.models;
     },
+    async presets(): Promise<Preset[]> {
+        const res = await request<{ presets: Preset[] }>("/v1/presets");
+        return res.presets;
+    },
+    createPreset(payload: Omit<Preset, "id" | "user_count">): Promise<Preset> {
+        return request<Preset>("/v1/presets", { method: "POST", body: payload });
+    },
+    updatePreset(id: string, payload: Omit<Preset, "id" | "user_count">): Promise<Preset> {
+        return request<Preset>(`/v1/presets/${id}`, { method: "PUT", body: payload });
+    },
+    deletePreset(id: string) {
+        return request<unknown>(`/v1/presets/${id}`, { method: "DELETE" });
+    },
+    async assignUserPreset(userId: string, presetId: string): Promise<User> {
+        const res = await request<{ user: User }>(`/v1/users/${userId}/preset`, {
+            method: "PUT",
+            body: { preset_id: presetId },
+        });
+        return res.user;
+    },
+    async clearUserPresetOverride(userId: string, field: string): Promise<User> {
+        const res = await request<{ user: User }>(`/v1/users/${userId}/preset-overrides/${field}`, {
+            method: "DELETE",
+        });
+        return res.user;
+    },
     async refreshUserModelOptions(): Promise<string[]> {
         const res = await request<{ models: string[] }>("/v1/users/model-options/refresh", {
             method: "POST",
@@ -524,6 +551,9 @@ export const api = {
             allowed_reasoning_levels?: ReasoningLevel[];
             allowed_models?: string[] | null;
             model_overrides?: Record<string, string>;
+            preset_id?: string;
+            model_reasoning_levels?: Record<string, ReasoningLevel[]>;
+            model_request_modes?: Record<string, RequestMode[]>;
         } = {},
     ): Promise<User> {
         const res = await request<{ user: User }>("/v1/users", {
@@ -541,6 +571,9 @@ export const api = {
                 allowed_reasoning_levels: opts.allowed_reasoning_levels,
                 allowed_models: opts.allowed_models,
                 model_overrides: opts.model_overrides,
+                preset_id: opts.preset_id,
+                model_reasoning_levels: opts.model_reasoning_levels,
+                model_request_modes: opts.model_request_modes,
             },
         });
         return res.user;
@@ -561,6 +594,8 @@ export const api = {
             allowed_reasoning_levels?: ReasoningLevel[];
             allowed_models?: string[] | null;
             model_overrides?: Record<string, string>;
+            model_reasoning_levels?: Record<string, ReasoningLevel[]>;
+            model_request_modes?: Record<string, RequestMode[]>;
         },
     ): Promise<User> {
         const res = await request<{ user: User }>(`/v1/users/${id}`, {

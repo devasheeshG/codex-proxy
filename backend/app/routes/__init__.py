@@ -11,6 +11,7 @@ from .fallbacks import router as fallbacks_router
 from .lookups import router as lookups_router
 from .me import router as me_router
 from .notifications import router as notifications_router
+from .presets import router as presets_router
 from .proxy import router as proxy_router
 from .stats import router as stats_router
 from .team import router as team_router
@@ -26,6 +27,7 @@ main_router.include_router(fallbacks_router)
 main_router.include_router(lookups_router)
 main_router.include_router(events_router)
 main_router.include_router(users_router)
+main_router.include_router(presets_router)
 main_router.include_router(stats_router)
 main_router.include_router(me_router)
 main_router.include_router(notifications_router)

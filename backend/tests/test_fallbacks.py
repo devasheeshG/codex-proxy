@@ -26,7 +26,7 @@ def _create(client, admin_headers, **overrides):
     return response.json()["fallback"]
 
 
-def _completed_sse(model="gpt-5.6-luna", input_tokens=10, output_tokens=5):
+def _completed_sse(model="gpt-6-luna", input_tokens=10, output_tokens=5):
     response = {
         "id": "resp_fallback",
         "object": "response",
@@ -117,7 +117,7 @@ def test_proxy_uses_fallback_only_when_subscription_pool_cannot_serve(
     response = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.6-luna", "input": "Reply OK", "max_output_tokens": 8},
+        json={"model": "gpt-6-luna", "input": "Reply OK", "max_output_tokens": 8},
     )
 
     assert response.status_code == 200, response.text
@@ -138,7 +138,7 @@ def test_exhausted_fallback_spend_cap_prevents_more_requests(
     admin_headers,
     make_user,
 ):
-    fallback = _create(client, admin_headers, monthly_spend_limit_usd=0.00001)
+    fallback = _create(client, admin_headers, monthly_spend_limit_usd=0.0000001)
     route = respx.post("https://fallback.example/v1/responses").mock(
         return_value=httpx.Response(
             200,
@@ -148,7 +148,7 @@ def test_exhausted_fallback_spend_cap_prevents_more_requests(
     )
     key = make_user("capped-user", fallback_enabled=True)
     headers = {"Authorization": f"Bearer {key}"}
-    payload = {"model": "gpt-5.6-luna", "input": "Reply OK"}
+    payload = {"model": "gpt-6-luna", "input": "Reply OK"}
 
     first = client.post("/api/v1/responses", headers=headers, json=payload)
     second = client.post("/api/v1/responses", headers=headers, json=payload)

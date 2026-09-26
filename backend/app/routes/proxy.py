@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.logger import get_logger
+from app.model_catalog import configured_model_ids
 from app.routes.me import build_pool_status
 from app.utils import (
     account_limiter,
@@ -220,24 +221,16 @@ def _filter_model_catalog(catalog: Dict, allowed_models: Optional[List[str]]) ->
     return filtered
 
 
-def _is_upstream_internal_auth_failure(candidate: httpx.Response) -> bool:
-    """Detect a 401 caused by the Codex backend's own internal service key, not our OAuth token.
-
-    When the Codex gateway successfully authenticates the ChatGPT OAuth token it
-    populates ``x-codex-plan-type`` and sibling quota headers *before* forwarding
-    the inference request to the model API.  If the model API then rejects the
-    gateway's own service-account key (``sk-svcac…``), the 401 carries those
-    Codex headers.  A genuine token rejection by the gateway itself never
-    includes them.
-
-    Treating this as a permanent authentication failure would needlessly park
-    every pooled account as ``REAUTH_REQUIRED`` during an upstream outage that
-    the proxy cannot fix by re-authenticating.
-    """
+async def _is_upstream_internal_auth_failure(candidate: httpx.Response) -> bool:
+    """Recognize the observed upstream service-key 401 without trusting headers alone."""
     if candidate.status_code != 401:
         return False
-    headers = {key.lower(): value for key, value in candidate.headers.items()}
-    return bool(headers.get("x-codex-plan-type"))
+    if not candidate.headers.get("x-codex-plan-type"):
+        return False
+    # A plan header is not proof that the client's OAuth token was accepted.
+    # Require the observed service-key prefix in the error body as well.
+    body = (await candidate.aread()).decode(errors="replace").lower()
+    return "sk-svcac" in body
 
 
 async def _is_model_unavailable(candidate: httpx.Response) -> bool:
@@ -833,6 +826,8 @@ def _enforce_request_policy(
     reasoning_level: Optional[str],
     model: object,
 ) -> None:
+    _enforce_model_policy(user, model)
+    model_id = model.strip().lower() if isinstance(model, str) else ""
     allowed_modes = request_policy.decode_choices(
         user.allowed_request_modes_json,
         request_policy.ALL_REQUEST_MODES,
@@ -842,6 +837,9 @@ def _enforce_request_policy(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"{request_mode.capitalize()} request mode is not allowed for this user.",
         )
+    model_modes = json.loads(user.model_request_modes_json or "{}")
+    if model_id in model_modes and request_mode not in model_modes[model_id]:
+        raise HTTPException(status_code=403, detail=f"{request_mode.capitalize()} request mode is not allowed for model '{model_id}'.")
 
     allowed_levels = request_policy.decode_choices(
         user.allowed_reasoning_levels_json,
@@ -858,22 +856,30 @@ def _enforce_request_policy(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Thinking level '{reasoning_level}' is not allowed for this user.",
         )
-
-    _enforce_model_policy(user, model)
+    model_levels = json.loads(user.model_reasoning_levels_json or "{}")
+    if model_id in model_levels:
+        if reasoning_level is None or reasoning_level not in model_levels[model_id]:
+            raise HTTPException(status_code=403, detail=f"Thinking level is not allowed for model '{model_id}'.")
 
 
 def _enforce_model_policy(user: UserDb, model: object) -> None:
     """Apply the per-user model allowlist to every model-aware proxy operation."""
     allowed_models = request_policy.decode_models(user.allowed_models_json)
-    if allowed_models is None:
-        return
     if not isinstance(model, str) or not model.strip():
+        if allowed_models is None and model is None:
+            return
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This user has restricted models; the request must explicitly set an allowed model.",
         )
     normalized_model = model.strip().lower()
-    if normalized_model not in allowed_models:
+    configured = set(configured_model_ids())
+    if normalized_model not in configured:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unknown or disabled model '{model}'.")
+    effective_model = _override_model(user, model)
+    if not isinstance(effective_model, str) or effective_model.strip().lower() not in configured:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid model redirect for '{model}'.")
+    if allowed_models is not None and normalized_model not in allowed_models:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Model '{model}' is not allowed for this user.",
@@ -1300,7 +1306,7 @@ async def proxy_search(
                 account,
             )
             if candidate.status_code == 401:
-                is_internal = _is_upstream_internal_auth_failure(candidate)
+                is_internal = await _is_upstream_internal_auth_failure(candidate)
                 await candidate.aclose()
                 if is_internal:
                     logger.warning(
@@ -1331,7 +1337,7 @@ async def proxy_search(
                     force_refresh=True,
                 )
                 if candidate.status_code == 401:
-                    is_internal_retry = _is_upstream_internal_auth_failure(candidate)
+                    is_internal_retry = await _is_upstream_internal_auth_failure(candidate)
                     await candidate.aclose()
                     if is_internal_retry:
                         logger.warning(
@@ -1831,7 +1837,7 @@ async def proxy_responses(
             if candidate.status_code == 401:
                 # Check BEFORE closing whether the 401 is the Codex backend's
                 # own internal service-key failure, not our OAuth token.
-                is_internal = _is_upstream_internal_auth_failure(candidate)
+                is_internal = await _is_upstream_internal_auth_failure(candidate)
                 await candidate.aclose()
                 if is_internal:
                     logger.warning(
@@ -1863,7 +1869,7 @@ async def proxy_responses(
                     force_refresh=True,
                 )
                 if candidate.status_code == 401:
-                    is_internal_retry = _is_upstream_internal_auth_failure(candidate)
+                    is_internal_retry = await _is_upstream_internal_auth_failure(candidate)
                     await candidate.aclose()
                     if is_internal_retry:
                         logger.warning(

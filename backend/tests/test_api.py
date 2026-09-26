@@ -1,16 +1,111 @@
 # Path: tests/test_api.py
 # Description: API tests for admin auth, user management, and the proxy path (non-streaming, streaming, failover).
 
+import asyncio
 import json
 import uuid
 
 import httpx
 import respx
 
+from app.routes.proxy import _is_upstream_internal_auth_failure
+
 CODEX_RESPONSES = "https://chatgpt.com/backend-api/codex/responses"
 CODEX_RESPONSES_COMPACT = f"{CODEX_RESPONSES}/compact"
 CODEX_MODELS = "https://chatgpt.com/backend-api/codex/models"
 CODEX_SEARCH = "https://chatgpt.com/backend-api/codex/alpha/search"
+
+
+def test_internal_service_key_401_requires_body_evidence():
+    ordinary = httpx.Response(401, headers={"x-codex-plan-type": "team"}, json={"error": "invalid OAuth token"})
+    internal = httpx.Response(401, headers={"x-codex-plan-type": "team"}, json={"error": "Incorrect API key: sk-svcac..."})
+    no_plan = httpx.Response(401, json={"error": "Incorrect API key: sk-svcac..."})
+    assert not asyncio.run(_is_upstream_internal_auth_failure(ordinary))
+    assert asyncio.run(_is_upstream_internal_auth_failure(internal))
+    assert not asyncio.run(_is_upstream_internal_auth_failure(no_plan))
+
+
+def test_presets_inherit_and_preserve_user_overrides(client, admin_headers):
+    preset = client.post(
+        "/api/v1/presets",
+        headers=admin_headers,
+        json={
+            "name": "Research",
+            "allowed_models": ["gpt-6-sol"],
+            "allowed_request_modes": ["standard", "fast"],
+            "allowed_reasoning_levels": ["low", "high"],
+            "model_request_modes": {"gpt-6-sol": ["fast"]},
+        },
+    )
+    assert preset.status_code == 201, preset.text
+    preset_id = preset.json()["id"]
+    user = client.post("/api/v1/users", headers=admin_headers, json={"name": "preset-user", "preset_id": preset_id})
+    assert user.status_code == 201, user.text
+    user_id = user.json()["user"]["id"]
+    assert user.json()["user"]["allowed_models"] == ["gpt-6-sol"]
+    assert user.json()["user"]["model_request_modes"] == {"gpt-6-sol": ["fast"]}
+    assert user.json()["user"]["preset_overrides"] == []
+
+    override = client.put(f"/api/v1/users/{user_id}", headers=admin_headers, json={"allowed_request_modes": ["standard"]})
+    assert override.status_code == 200, override.text
+    assert override.json()["user"]["preset_overrides"] == ["allowed_request_modes"]
+
+    changed = client.put(
+        f"/api/v1/presets/{preset_id}",
+        headers=admin_headers,
+        json={
+            "name": "Research",
+            "allowed_models": ["gpt-6-luna"],
+            "allowed_request_modes": ["ultrafast"],
+            "allowed_reasoning_levels": ["high"],
+            "model_request_modes": {"gpt-6-luna": ["ultrafast"]},
+        },
+    )
+    assert changed.status_code == 200, changed.text
+    listed = client.get("/api/v1/users", headers=admin_headers).json()["users"][0]
+    assert listed["allowed_models"] == ["gpt-6-luna"]
+    assert listed["allowed_request_modes"] == ["standard"]
+    reset = client.delete(f"/api/v1/users/{user_id}/preset-overrides/allowed_request_modes", headers=admin_headers)
+    assert reset.status_code == 200
+    assert reset.json()["user"]["allowed_request_modes"] == ["ultrafast"]
+    assert reset.json()["user"]["preset_overrides"] == []
+    assert client.delete(f"/api/v1/presets/{preset_id}", headers=admin_headers).status_code == 409
+
+
+def test_preset_migration_preserves_existing_user_policies(client, admin_headers):
+    from app.scripts.migrate import sync_canonical_schema
+
+    first = client.post("/api/v1/users", headers=admin_headers, json={"name": "first", "allowed_request_modes": ["standard"]})
+    second = client.post("/api/v1/users", headers=admin_headers, json={"name": "second", "allowed_request_modes": ["fast"]})
+    assert first.status_code == second.status_code == 201
+    sync_canonical_schema()
+    users = client.get("/api/v1/users", headers=admin_headers).json()["users"]
+    presets = client.get("/api/v1/presets", headers=admin_headers).json()["presets"]
+    assert len(presets) == 1 and presets[0]["name"] == "Current configuration"
+    assert {user["name"]: user["allowed_request_modes"] for user in users} == {"first": ["standard"], "second": ["fast"]}
+    assert all(user["preset_id"] == presets[0]["id"] for user in users)
+    assert sum("allowed_request_modes" in user["preset_overrides"] for user in users) == 1
+
+
+def test_per_model_request_mode_from_preset_is_enforced(client, admin_headers):
+    preset = client.post(
+        "/api/v1/presets",
+        headers=admin_headers,
+        json={"name": "Fast only Sol", "model_request_modes": {"gpt-6-sol": ["fast"]}},
+    ).json()
+    user = client.post("/api/v1/users", headers=admin_headers, json={"name": "mode-user", "preset_id": preset["id"]}).json()["user"]
+    secret = client.post(f"/api/v1/users/{user['id']}/keys", headers=admin_headers, json={"label": "test"}).json()["secret"]
+    response = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {secret}"}, json={"model": "gpt-6-sol", "input": "hi"})
+    assert response.status_code == 403
+    assert "not allowed for model" in response.text
+
+
+def test_preset_routes_use_user_policy_permissions():
+    from app.utils.security.permissions import required_permission
+
+    assert required_permission("/api/v1/presets", "GET") == "proxy_users:read"
+    assert required_permission("/api/v1/presets", "POST") == "proxy_users:write"
+    assert required_permission("/api/v1/users/123/preset-overrides/allowed_models", "DELETE") == "proxy_users:write"
 
 
 def test_login_success_and_failure(client, admin_password):
@@ -44,6 +139,7 @@ def test_user_crud_and_key_management(client, admin_headers):
         "max",
     ]
     assert created.json()["user"]["allowed_models"] is None
+    assert created.json()["user"]["model_overrides"] == {"gpt-6-astra": "gpt-6-sol"}
 
     updated = client.put(f"/api/v1/users/{user_id}", headers=admin_headers, json={"name": "alice-2"})
     assert updated.status_code == 200
@@ -76,14 +172,14 @@ def test_user_request_policy_can_be_customized(client, admin_headers):
             "name": "restricted",
             "allowed_request_modes": ["FAST"],
             "allowed_reasoning_levels": ["LOW", "high"],
-            "allowed_models": ["GPT-5.6-SOL", "gpt-5.6-sol"],
+            "allowed_models": ["GPT-6-SOL", "gpt-6-sol"],
         },
     )
     assert created.status_code == 201, created.text
     user = created.json()["user"]
     assert user["allowed_request_modes"] == ["fast"]
     assert user["allowed_reasoning_levels"] == ["low", "high"]
-    assert user["allowed_models"] == ["gpt-5.6-sol"]
+    assert user["allowed_models"] == ["gpt-6-sol"]
 
     updated = client.put(
         f"/api/v1/users/{user['id']}",
@@ -91,19 +187,16 @@ def test_user_request_policy_can_be_customized(client, admin_headers):
         json={
             "allowed_request_modes": ["standard"],
             "allowed_reasoning_levels": ["medium"],
-            "allowed_models": ["gpt-5.4"],
+            "allowed_models": ["gpt-6-luna"],
         },
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["user"]["allowed_request_modes"] == ["standard"]
     assert updated.json()["user"]["allowed_reasoning_levels"] == ["medium"]
-    assert updated.json()["user"]["allowed_models"] == ["gpt-5.4"]
+    assert updated.json()["user"]["allowed_models"] == ["gpt-6-luna"]
     options = client.get("/api/v1/users/model-options", headers=admin_headers)
     assert options.status_code == 200, options.text
     assert options.json()["models"] == [
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -143,7 +236,7 @@ def test_user_budgets_and_model_overrides_crud(client, admin_headers):
             "lifetime_token_budget": 5_000,
             "monthly_spend_budget_usd": 12.5,
             "lifetime_spend_budget_usd": 75,
-            "model_overrides": {"GPT-6-ASTRA": "GPT-5.6-SOL"},
+            "model_overrides": {"GPT-6-ASTRA": "GPT-6-SOL"},
         },
     )
     assert created.status_code == 201, created.text
@@ -152,7 +245,7 @@ def test_user_budgets_and_model_overrides_crud(client, admin_headers):
     assert user["lifetime_token_budget"] == 5_000
     assert user["monthly_spend_budget_usd"] == 12.5
     assert user["lifetime_spend_budget_usd"] == 75
-    assert user["model_overrides"] == {"gpt-6-astra": "gpt-5.6-sol"}
+    assert user["model_overrides"] == {"gpt-6-astra": "gpt-6-sol"}
 
     updated = client.put(
         f"/api/v1/users/{user['id']}",
@@ -171,7 +264,7 @@ def test_user_budgets_and_model_overrides_crud(client, admin_headers):
     no_op = client.put(
         f"/api/v1/users/{user['id']}",
         headers=admin_headers,
-        json={"model_overrides": {"gpt-5.6-sol": "GPT-5.6-SOL"}},
+        json={"model_overrides": {"gpt-6-sol": "GPT-6-SOL"}},
     )
     assert no_op.status_code == 422
 
@@ -187,9 +280,6 @@ def test_refresh_model_options_returns_fixed_catalog_without_upstream_calls(clie
 
     assert response.status_code == 200, response.text
     assert response.json()["models"] == [
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -202,6 +292,43 @@ def test_proxy_requires_user_key(client):
     assert client.post("/api/v1/responses", json={}).status_code == 401
 
 
+def test_unknown_models_cannot_be_saved_to_user_policy(client, admin_headers):
+    for payload in (
+        {"name": "unknown-allowlist", "allowed_models": ["gpt-5.6-sol"]},
+        {"name": "unknown-source", "model_overrides": {"gpt-5.6-sol": "gpt-6-sol"}},
+        {"name": "unknown-target", "model_overrides": {"gpt-6-astra": "gpt-5.6-sol"}},
+    ):
+        assert client.post("/api/v1/users", headers=admin_headers, json=payload).status_code == 422
+    created = client.post("/api/v1/users", headers=admin_headers, json={"name": "valid-user"}).json()["user"]
+    assert (
+        client.put(
+            f"/api/v1/users/{created['id']}",
+            headers=admin_headers,
+            json={"model_overrides": {"gpt-6-astra": "gpt-5.6-sol"}},
+        ).status_code
+        == 422
+    )
+    stored = client.get("/api/v1/users", headers=admin_headers).json()["users"]
+    assert len(stored) == 1 and stored[0]["model_overrides"] == {"gpt-6-astra": "gpt-6-sol"}
+
+
+@respx.mock
+def test_unknown_models_never_reach_codex_upstream(client, make_user):
+    key = make_user("unknown-model-user")
+    respx.route(host="testserver").pass_through()
+    upstream = respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={}))
+    headers = {"Authorization": f"Bearer {key}"}
+    for path, body in (
+        ("/api/v1/responses", {"model": "gpt-5.6-sol", "input": "hello"}),
+        ("/api/v1/responses/compact", {"model": "gpt-5.6", "input": []}),
+        ("/api/v1/alpha/search", {"model": "gpt-5.6-terra", "query": "hello"}),
+        ("/api/v1/chat/completions", {"model": "gpt-5.6-luna", "messages": [{"role": "user", "content": "hello"}]}),
+    ):
+        response = client.post(path, headers=headers, json=body)
+        assert response.status_code == 400, (path, response.text)
+    assert upstream.call_count == 0
+
+
 @respx.mock
 def test_per_user_model_override_rewrites_before_upstream_routing(client, admin_headers, seed_account):
     seed_account("model-rewrite")
@@ -211,7 +338,7 @@ def test_per_user_model_override_rewrites_before_upstream_routing(client, admin_
         json={
             "name": "rewritten",
             "allowed_models": ["gpt-6-astra"],
-            "model_overrides": {"gpt-6-astra": "gpt-5.6-sol"},
+            "model_overrides": {"gpt-6-astra": "gpt-6-sol"},
         },
     ).json()["user"]
     key = client.post(f"/api/v1/users/{created['id']}/keys", headers=admin_headers, json={"label": "test-key"}).json()["secret"]
@@ -219,7 +346,7 @@ def test_per_user_model_override_rewrites_before_upstream_routing(client, admin_
     upstream = respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             200,
-            json={"model": "gpt-5.6-sol", "usage": {"input_tokens": 3, "output_tokens": 2}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 3, "output_tokens": 2}},
         )
     )
 
@@ -230,7 +357,7 @@ def test_per_user_model_override_rewrites_before_upstream_routing(client, admin_
     )
 
     assert response.status_code == 200, response.text
-    assert json.loads(upstream.calls[0].request.content)["model"] == "gpt-5.6-sol"
+    assert json.loads(upstream.calls[0].request.content)["model"] == "gpt-6-sol"
     assert response.json()["model"] == "gpt-6-astra"
 
 
@@ -240,12 +367,12 @@ def test_model_override_uses_requested_name_in_pool_unavailable_error(client, ad
 
     account_id = seed_account("unavailable-model", weekly_used_pct=1.0)
     with SessionFactory() as db:
-        db.get(AccountDb, account_id).model_catalog_json = '[{"slug":"gpt-5.6-sol"}]'
+        db.get(AccountDb, account_id).model_catalog_json = '[{"slug":"gpt-6-sol"}]'
         db.commit()
     created = client.post(
         "/api/v1/users",
         headers=admin_headers,
-        json={"name": "alias-error", "model_overrides": {"gpt-6-astra": "gpt-5.6-sol"}},
+        json={"name": "alias-error", "model_overrides": {"gpt-6-astra": "gpt-6-sol"}},
     ).json()["user"]
     key = client.post(f"/api/v1/users/{created['id']}/keys", headers=admin_headers, json={"label": "test-key"}).json()["secret"]
 
@@ -257,7 +384,7 @@ def test_model_override_uses_requested_name_in_pool_unavailable_error(client, ad
 
     assert response.status_code == 503
     assert "GPT-6-ASTRA" in response.json()["detail"]
-    assert "gpt-5.6-sol" not in response.text
+    assert "gpt-6-sol" not in response.text
 
 
 @respx.mock
@@ -266,14 +393,14 @@ def test_model_override_hides_effective_name_in_forwarded_error(client, admin_he
     created = client.post(
         "/api/v1/users",
         headers=admin_headers,
-        json={"name": "forwarded-alias-error", "model_overrides": {"gpt-6-astra": "gpt-5.6-sol"}},
+        json={"name": "forwarded-alias-error", "model_overrides": {"gpt-6-astra": "gpt-6-sol"}},
     ).json()["user"]
     key = client.post(f"/api/v1/users/{created['id']}/keys", headers=admin_headers, json={"label": "test-key"}).json()["secret"]
     respx.route(host="testserver").pass_through()
     upstream = respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             422,
-            json={"error": {"message": "Invalid request for model gpt-5.6-sol"}},
+            json={"error": {"message": "Invalid request for model gpt-6-sol"}},
         )
     )
 
@@ -284,9 +411,9 @@ def test_model_override_hides_effective_name_in_forwarded_error(client, admin_he
     )
 
     assert response.status_code == 422
-    assert json.loads(upstream.calls[0].request.content)["model"] == "gpt-5.6-sol"
+    assert json.loads(upstream.calls[0].request.content)["model"] == "gpt-6-sol"
     assert response.json()["error"]["message"] == "Invalid request for model GPT-6-ASTRA"
-    assert "gpt-5.6-sol" not in response.text
+    assert "gpt-6-sol" not in response.text
 
 
 @respx.mock
@@ -296,7 +423,7 @@ def test_user_lifetime_token_and_spend_budgets_are_enforced(client, admin_header
     respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             200,
-            json={"model": "gpt-5.4", "usage": {"input_tokens": 10, "output_tokens": 10}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 10, "output_tokens": 10}},
         )
     )
 
@@ -314,8 +441,8 @@ def test_user_lifetime_token_and_spend_budgets_are_enforced(client, admin_header
         key = client.post(f"/api/v1/users/{user['id']}/keys", headers=admin_headers, json={"label": "test-key"}).json()["secret"]
         headers = {"Authorization": f"Bearer {key}"}
 
-        assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-5.4"}).status_code == 200
-        blocked = client.post("/api/v1/responses", headers=headers, json={"model": "gpt-5.4"})
+        assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-6-sol"}).status_code == 200
+        blocked = client.post("/api/v1/responses", headers=headers, json={"model": "gpt-6-sol"})
         assert blocked.status_code == 403
         assert expected_detail in blocked.json()["detail"].lower()
 
@@ -362,7 +489,7 @@ def test_weekly_exhaustion_redeems_earliest_credit_and_retries_request(client, s
             ),
             httpx.Response(
                 200,
-                json={"model": "gpt-5.4", "usage": {"input_tokens": 2, "output_tokens": 1}},
+                json={"model": "gpt-6-sol", "usage": {"input_tokens": 2, "output_tokens": 1}},
             ),
         ]
     )
@@ -398,7 +525,7 @@ def test_weekly_exhaustion_redeems_earliest_credit_and_retries_request(client, s
         response = client.post(
             "/api/v1/responses",
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": "gpt-5.4"},
+            json={"model": "gpt-6-sol"},
         )
 
     assert response.status_code == 200, response.text
@@ -430,7 +557,7 @@ def test_already_exhausted_account_redeems_before_selection(client, seed_account
     upstream = respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             200,
-            json={"model": "gpt-5.4", "usage": {"input_tokens": 2, "output_tokens": 1}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 2, "output_tokens": 1}},
         )
     )
     credit = {
@@ -471,7 +598,7 @@ def test_already_exhausted_account_redeems_before_selection(client, seed_account
         response = client.post(
             "/api/v1/responses",
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": "gpt-5.4"},
+            json={"model": "gpt-6-sol"},
         )
 
     assert response.status_code == 200, response.text
@@ -505,7 +632,7 @@ def test_successful_response_that_reaches_weekly_limit_redeems_without_replaying
                 "x-codex-secondary-used-percent": "100",
                 "x-codex-rate-limit-reset-credits-available": "1",
             },
-            json={"model": "gpt-5.4", "usage": {"input_tokens": 2, "output_tokens": 1}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 2, "output_tokens": 1}},
         )
     )
     credit = {
@@ -546,7 +673,7 @@ def test_successful_response_that_reaches_weekly_limit_redeems_without_replaying
         response = client.post(
             "/api/v1/responses",
             headers={"Authorization": f"Bearer {key}"},
-            json={"model": "gpt-5.4"},
+            json={"model": "gpt-6-sol"},
         )
 
     assert response.status_code == 200, response.text
@@ -578,7 +705,7 @@ def test_proxy_forwards_standalone_search_and_records_correlated_events(
     key = make_user("search-user")
     request_body = {
         "id": "session-search-1",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "input": "Find the latest documentation",
         "commands": {"search_query": [{"q": "OpenAI Codex documentation"}]},
         "settings": {"external_web_access": True},
@@ -682,7 +809,7 @@ def test_proxy_search_fails_over_after_account_rate_limit(
         headers={"Authorization": f"Bearer {key}"},
         json={
             "id": "session-search-failover",
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-sol",
             "commands": {"search_query": [{"q": "status"}]},
         },
     )
@@ -746,7 +873,7 @@ def test_events_operation_filter_separates_search_from_inference(client, admin_h
                     id=uuid.uuid4(),
                     request_id="req-inference-event",
                     event_type="response.returned",
-                    metadata_json=json.dumps({"model": "gpt-5.6-sol"}, separators=(",", ":")),
+                    metadata_json=json.dumps({"model": "gpt-6-sol"}, separators=(",", ":")),
                 ),
             ]
         )
@@ -789,7 +916,7 @@ def test_events_keep_routed_model_when_usage_reports_provider_alias(client, admi
             UsageRecordDb(
                 id=uuid.uuid4(),
                 user_id=user.id,
-                model="gpt-5.6-luna",
+                model="gpt-6-luna",
                 input_tokens=10,
                 output_tokens=5,
                 status_code=200,
@@ -804,7 +931,7 @@ def test_events_keep_routed_model_when_usage_reports_provider_alias(client, admi
     metadata = response.json()["events"][0]["metadata"]
     assert metadata["model"] == "gpt-6-astra"
     assert metadata["requested_model"] == "gpt-6-astra"
-    assert metadata["upstream_response_model"] == "gpt-5.6-luna"
+    assert metadata["upstream_response_model"] == "gpt-6-luna"
 
 
 @respx.mock
@@ -817,7 +944,7 @@ def test_proxy_compacts_without_generation_only_request_mutations(
     seed_account("compactor")
     key = make_user("compactor-user")
     request_body = {
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "input": [{"role": "user", "content": "Keep this context."}],
     }
     compacted = {
@@ -1115,7 +1242,7 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
 
     respx.route(host="testserver").pass_through()
     route = respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(
-        return_value=httpx.Response(200, json={"models": [{"slug": "gpt-5.4"}]})
+        return_value=httpx.Response(200, json={"models": [{"slug": "gpt-6-sol"}]})
     )
 
     response = client.get(
@@ -1125,9 +1252,6 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
     )
     assert response.status_code == 200
     assert [model["slug"] for model in response.json()["models"]] == [
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -1144,18 +1268,15 @@ def test_model_catalog_does_not_probe_pooled_accounts(client, seed_account, make
     respx.route(host="testserver").pass_through()
 
     def catalog(request):
-        models = [{"slug": "gpt-5.6-luna"}]
+        models = [{"slug": "gpt-6-luna"}]
         if request.headers["chatgpt-account-id"] == "chatgpt-team":
-            models.append({"slug": "gpt-5.6-sol"})
+            models.append({"slug": "gpt-6-sol"})
         return httpx.Response(200, json={"models": models})
 
     route = respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(side_effect=catalog)
     response = client.get("/api/v1/models", headers={"Authorization": f"Bearer {key}"})
     assert response.status_code == 200
     assert {model["id"] for model in response.json()["data"]} == {
-        "gpt-5.6-luna",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
@@ -1170,7 +1291,7 @@ def test_model_catalog_is_filtered_by_user_allowlist(client, admin_headers, seed
     created = client.post(
         "/api/v1/users",
         headers=admin_headers,
-        json={"name": "restricted-catalog", "allowed_models": ["gpt-5.6-sol"]},
+        json={"name": "restricted-catalog", "allowed_models": ["gpt-6-sol"]},
     )
     user_id = created.json()["user"]["id"]
     key = client.post(f"/api/v1/users/{user_id}/keys", headers=admin_headers, json={"label": "test-key"}).json()["secret"]
@@ -1178,14 +1299,14 @@ def test_model_catalog_is_filtered_by_user_allowlist(client, admin_headers, seed
     respx.get(CODEX_MODELS, params={"client_version": "0.157.0"}).mock(
         return_value=httpx.Response(
             200,
-            json={"models": [{"slug": "gpt-5.6-luna"}, {"slug": "gpt-5.6-sol"}]},
+            json={"models": [{"slug": "gpt-6-luna"}, {"slug": "gpt-6-sol"}]},
         )
     )
 
     response = client.get("/api/v1/models", headers={"Authorization": f"Bearer {key}"})
 
     assert response.status_code == 200, response.text
-    assert [model["id"] for model in response.json()["data"]] == ["gpt-5.6-sol"]
+    assert [model["id"] for model in response.json()["data"]] == ["gpt-6-sol"]
 
 
 @respx.mock
@@ -1196,8 +1317,8 @@ def test_sol_skips_higher_priority_go_account(client, seed_account, make_user):
     go_id = seed_account("go", priority=1)
     team_id = seed_account("team", priority=2)
     with SessionFactory() as db:
-        db.get(AccountDb, go_id).model_catalog_json = '[{"slug":"gpt-5.6-luna"}]'
-        db.get(AccountDb, team_id).model_catalog_json = '[{"slug":"gpt-5.6-luna"},{"slug":"gpt-5.6-sol"}]'
+        db.get(AccountDb, go_id).model_catalog_json = '[{"slug":"gpt-6-luna"}]'
+        db.get(AccountDb, team_id).model_catalog_json = '[{"slug":"gpt-6-luna"},{"slug":"gpt-6-sol"}]'
         db.commit()
 
     key = make_user("sol-user")
@@ -1210,14 +1331,14 @@ def test_sol_skips_higher_priority_go_account(client, seed_account, make_user):
         assert "max_output_tokens" not in upstream_body
         return httpx.Response(
             200,
-            json={"model": "gpt-5.6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}},
         )
 
     route = respx.post(CODEX_RESPONSES).mock(side_effect=inference)
     response = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.6-sol", "input": "hello", "max_output_tokens": 64},
+        json={"model": "gpt-6-sol", "input": "hello", "max_output_tokens": 64},
     )
     assert response.status_code == 200
     assert route.call_count == 1
@@ -1231,7 +1352,7 @@ def test_unknown_model_account_keeps_priority_and_fails_over_if_rejected(client,
     seed_account("new", priority=1)
     confirmed_id = seed_account("confirmed", priority=2)
     with SessionFactory() as db:
-        db.get(AccountDb, confirmed_id).model_catalog_json = '[{"slug":"gpt-5.6-sol"}]'
+        db.get(AccountDb, confirmed_id).model_catalog_json = '[{"slug":"gpt-6-sol"}]'
         db.commit()
 
     key = make_user("new-account-user")
@@ -1239,14 +1360,14 @@ def test_unknown_model_account_keeps_priority_and_fails_over_if_rejected(client,
     route = respx.post(CODEX_RESPONSES).mock(
         side_effect=[
             httpx.Response(403, json={"error": {"message": "model is not available for this account"}}),
-            httpx.Response(200, json={"model": "gpt-5.6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
         ]
     )
 
     response = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.6-sol", "input": "hello"},
+        json={"model": "gpt-6-sol", "input": "hello"},
     )
 
     assert response.status_code == 200
@@ -1264,8 +1385,8 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
             200,
             json={
                 "models": [
-                    {"slug": "gpt-5.4"},
-                    {"slug": "gpt-5.6", "owned_by": "openai"},
+                    {"slug": "gpt-6-sol"},
+                    {"slug": "gpt-6-sol", "owned_by": "openai"},
                 ]
             },
         )
@@ -1279,9 +1400,6 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
     assert response.json() == {
         "object": "list",
         "data": [
-            {"id": "gpt-5.6-luna", "object": "model", "created": 0, "owned_by": "openai"},
-            {"id": "gpt-5.6-sol", "object": "model", "created": 0, "owned_by": "openai"},
-            {"id": "gpt-5.6-terra", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-astra", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-sol", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-luna", "object": "model", "created": 0, "owned_by": "openai"},
@@ -1300,11 +1418,11 @@ def test_proxy_nonstreaming_records_usage(client, admin_headers, seed_account, m
 
     def upstream(request):
         assert json.loads(request.content)["reasoning"] == {"effort": "none"}
-        return httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 10, "output_tokens": 5}})
+        return httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 10, "output_tokens": 5}})
 
     respx.post(CODEX_RESPONSES).mock(side_effect=upstream)
 
-    resp = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4", "input": []})
+    resp = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol", "input": []})
     assert resp.status_code == 200
 
     usage = client.get("/api/v1/stats/usage", headers=admin_headers).json()
@@ -1332,7 +1450,7 @@ def test_proxy_enforces_user_mode_and_thinking_policy_and_tracks_fast_mode(
             "name": "policy-user",
             "allowed_request_modes": ["fast"],
             "allowed_reasoning_levels": ["high"],
-            "allowed_models": ["gpt-5.6"],
+            "allowed_models": ["gpt-6-sol"],
         },
     )
     user_id = created.json()["user"]["id"]
@@ -1344,14 +1462,14 @@ def test_proxy_enforces_user_mode_and_thinking_policy_and_tracks_fast_mode(
     upstream = respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             200,
-            json={"model": "gpt-5.6", "usage": {"input_tokens": 3, "output_tokens": 2}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 3, "output_tokens": 2}},
         )
     )
 
     standard = client.post(
         "/api/v1/responses",
         headers=headers,
-        json={"model": "gpt-5.6", "reasoning": {"effort": "high"}},
+        json={"model": "gpt-6-sol", "reasoning": {"effort": "high"}},
     )
     assert standard.status_code == 403
     assert "Standard request mode" in standard.json()["detail"]
@@ -1359,7 +1477,7 @@ def test_proxy_enforces_user_mode_and_thinking_policy_and_tracks_fast_mode(
     wrong_level = client.post(
         "/api/v1/responses",
         headers=headers,
-        json={"model": "gpt-5.6", "service_tier": "fast", "reasoning": {"effort": "low"}},
+        json={"model": "gpt-6-sol", "service_tier": "fast", "reasoning": {"effort": "low"}},
     )
     assert wrong_level.status_code == 403
     assert "Thinking level 'low'" in wrong_level.json()["detail"]
@@ -1367,10 +1485,10 @@ def test_proxy_enforces_user_mode_and_thinking_policy_and_tracks_fast_mode(
     wrong_model = client.post(
         "/api/v1/responses",
         headers=headers,
-        json={"model": "gpt-5.4", "service_tier": "fast", "reasoning": {"effort": "high"}},
+        json={"model": "gpt-6-luna", "service_tier": "fast", "reasoning": {"effort": "high"}},
     )
     assert wrong_model.status_code == 403
-    assert "Model 'gpt-5.4'" in wrong_model.json()["detail"]
+    assert "Model 'gpt-6-luna'" in wrong_model.json()["detail"]
 
     missing_model = client.post(
         "/api/v1/responses",
@@ -1383,7 +1501,7 @@ def test_proxy_enforces_user_mode_and_thinking_policy_and_tracks_fast_mode(
     missing_level = client.post(
         "/api/v1/responses",
         headers=headers,
-        json={"model": "gpt-5.6", "service_tier": "fast"},
+        json={"model": "gpt-6-sol", "service_tier": "fast"},
     )
     assert missing_level.status_code == 403
     assert "Thinking level 'none'" in missing_level.json()["detail"]
@@ -1393,7 +1511,7 @@ def test_proxy_enforces_user_mode_and_thinking_policy_and_tracks_fast_mode(
         "/api/v1/responses",
         headers=headers,
         json={
-            "model": "gpt-5.6",
+            "model": "gpt-6-sol",
             # The Responses API accepts both aliases for Fast mode.
             "service_tier": "priority",
             "reasoning": {"effort": "HIGH"},
@@ -1416,7 +1534,7 @@ def test_proxy_enforces_and_tracks_ultrafast_mode(client, admin_headers, seed_ac
             "name": "ultrafast-user",
             "allowed_request_modes": ["ultrafast"],
             "allowed_reasoning_levels": ["none"],
-            "allowed_models": ["gpt-5.6-sol"],
+            "allowed_models": ["gpt-6-sol"],
         },
     )
     user_id = created.json()["user"]["id"]
@@ -1428,14 +1546,14 @@ def test_proxy_enforces_and_tracks_ultrafast_mode(client, admin_headers, seed_ac
     upstream = respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             200,
-            json={"model": "gpt-5.6-sol", "usage": {"input_tokens": 3, "output_tokens": 2}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 3, "output_tokens": 2}},
         )
     )
 
     denied = client.post(
         "/api/v1/responses",
         headers=headers,
-        json={"model": "gpt-5.6-sol", "service_tier": "fast"},
+        json={"model": "gpt-6-sol", "service_tier": "fast"},
     )
     assert denied.status_code == 403
     assert "Fast request mode" in denied.json()["detail"]
@@ -1443,7 +1561,7 @@ def test_proxy_enforces_and_tracks_ultrafast_mode(client, admin_headers, seed_ac
     allowed = client.post(
         "/api/v1/responses",
         headers=headers,
-        json={"model": "gpt-5.6-sol", "service_tier": "ultrafast"},
+        json={"model": "gpt-6-sol", "service_tier": "ultrafast"},
     )
     assert allowed.status_code == 200, allowed.text
     assert upstream.call_count == 1
@@ -1468,12 +1586,12 @@ def test_thinking_level_mix_groups_requests_per_user_and_defaults_unreported_to_
     respx.post(CODEX_RESPONSES).mock(
         return_value=httpx.Response(
             200,
-            json={"model": "gpt-5.4", "usage": {"input_tokens": 4, "output_tokens": 2}},
+            json={"model": "gpt-6-sol", "usage": {"input_tokens": 4, "output_tokens": 2}},
         )
     )
 
     def make_request(key, effort=None):
-        body = {"model": "gpt-5.4", "input": "hello"}
+        body = {"model": "gpt-6-sol", "input": "hello"}
         if effort is not None:
             body["reasoning"] = {"effort": effort}
         response = client.post(
@@ -1533,7 +1651,7 @@ def test_proxy_converts_codex_stream_to_nonstreaming_openai_response(
         "id": "resp_test",
         "object": "response",
         "status": "completed",
-        "model": "gpt-5.4",
+        "model": "gpt-6-sol",
         "output": [
             {
                 "id": "msg_test",
@@ -1571,7 +1689,7 @@ def test_proxy_converts_codex_stream_to_nonstreaming_openai_response(
     response = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.4", "input": "Say SDK_OK", "reasoning": {"effort": "low"}},
+        json={"model": "gpt-6-sol", "input": "Say SDK_OK", "reasoning": {"effort": "low"}},
     )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/json")
@@ -1599,7 +1717,7 @@ def test_proxy_streaming_relays_and_records(client, admin_headers, seed_account,
     key = make_user("carol")
 
     sse = (
-        'data: {"type":"response.completed","response":{"model":"gpt-5.4","usage":'
+        'data: {"type":"response.completed","response":{"model":"gpt-6-sol","usage":'
         '{"input_tokens":20,"output_tokens":42,"input_tokens_details":'
         '{"cached_tokens":3,"cache_write_tokens":4}}}}\n\n'
         "data: [DONE]\n\n"
@@ -1611,13 +1729,13 @@ def test_proxy_streaming_relays_and_records(client, admin_headers, seed_account,
     resp = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "x", "input": "Say hello", "stream": True, "reasoning": {"effort": "high"}},
+        json={"model": "gpt-6-astra", "input": "Say hello", "stream": True, "reasoning": {"effort": "high"}},
     )
     assert resp.status_code == 200
     assert resp.headers["content-type"].startswith("text/event-stream")
     assert "response.completed" in resp.text
-    assert '"model":"x"' in resp.text
-    assert '"model":"gpt-5.4"' not in resp.text
+    assert '"model":"gpt-6-astra"' in resp.text
+    assert '"model":"gpt-6-sol"' not in resp.text
     assert json.loads(route.calls[0].request.content)["input"] == [
         {
             "role": "user",
@@ -1631,7 +1749,7 @@ def test_proxy_streaming_relays_and_records(client, admin_headers, seed_account,
     assert record["cached_input_tokens"] == 3
     assert record["cache_write_tokens"] == 4
     assert record["reasoning_level"] == "high"
-    assert record["model"] == "gpt-5.4"
+    assert record["model"] == "gpt-6-sol"
 
 
 @respx.mock
@@ -1652,11 +1770,11 @@ def test_proxy_fails_over_on_429(client, admin_headers, seed_account, make_user)
                 headers={"retry-after": "1"},
                 json={"error": {"message": "Rate limited by OpenAI"}},
             ),
-            httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
         ]
     )
 
-    resp = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    resp = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
     assert resp.status_code == 200
     with SessionFactory() as db:
         first = db.get(AccountDb, first_id)
@@ -1683,12 +1801,12 @@ def test_proxy_cools_down_capacity_account_and_immediately_fails_over(client, se
     route = respx.post(CODEX_RESPONSES).mock(
         side_effect=[
             httpx.Response(403, json=capacity),
-            httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
         ]
     )
     headers = {"Authorization": f"Bearer {key}"}
 
-    assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-5.4"}).status_code == 200
+    assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-6-sol"}).status_code == 200
     account_ids = [call.request.headers["chatgpt-account-id"] for call in route.calls]
     assert account_ids == ["chatgpt-capacity-first", "chatgpt-capacity-second"]
     with SessionFactory() as db:
@@ -1708,10 +1826,10 @@ def test_proxy_fails_over_on_streamed_capacity_event(client, seed_account, make_
     route = respx.post(CODEX_RESPONSES).mock(
         side_effect=[
             httpx.Response(200, headers={"content-type": "text/event-stream"}, text=capacity_sse),
-            httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
         ]
     )
-    response = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    response = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
     assert response.status_code == 200
     assert len(route.calls) == 2
 
@@ -1730,14 +1848,14 @@ def test_proxy_fails_over_and_cools_down_account_on_empty_404(client, seed_accou
     route = respx.post(CODEX_RESPONSES).mock(
         side_effect=[
             httpx.Response(404, content=b""),
-            httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}),
-            httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
+            httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}),
         ]
     )
     headers = {"Authorization": f"Bearer {key}"}
 
-    assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-5.4"}).status_code == 200
-    assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-5.4"}).status_code == 200
+    assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-6-sol"}).status_code == 200
+    assert client.post("/api/v1/responses", headers=headers, json={"model": "gpt-6-sol"}).status_code == 200
 
     assert len(route.calls) == 3
     assert route.calls[0].request.headers["chatgpt-account-id"] == "chatgpt-empty-404-first"
@@ -1763,7 +1881,7 @@ def test_proxy_preserves_nonempty_404_without_content_type(client, seed_account,
     response = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.4"},
+        json={"model": "gpt-6-sol"},
     )
 
     assert response.status_code == 404
@@ -1786,7 +1904,7 @@ def test_proxy_returns_pool_unavailable_after_all_accounts_return_empty_404(clie
     response = client.post(
         "/api/v1/responses",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.4"},
+        json={"model": "gpt-6-sol"},
     )
 
     assert response.status_code == 503
@@ -2087,8 +2205,8 @@ def test_me_usage_reports_own_usage_and_pool(client, admin_headers, seed_account
     assert me.json()["pool"]["five_hour"]["unknown_account_count"] == 0
 
     respx.route(host="testserver").pass_through()
-    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 8, "output_tokens": 4}}))
-    client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 8, "output_tokens": 4}}))
+    client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
 
     me_after = client.get("/api/v1/me/usage", headers={"Authorization": f"Bearer {key}"}).json()
     assert me_after["tokens_this_month"] == 12
@@ -2145,11 +2263,11 @@ def test_per_key_rate_limit(client, admin_headers, seed_account):
     key = client.post(f"/api/v1/users/{user_id}/keys", headers=admin_headers, json={"label": "k", "rate_limit_per_minute": 1}).json()["secret"]
 
     respx.route(host="testserver").pass_through()
-    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}))
 
-    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
     assert first.status_code == 200
-    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
     assert second.status_code == 429
 
 
@@ -2160,11 +2278,11 @@ def test_per_key_monthly_budget(client, admin_headers, seed_account):
     key = client.post(f"/api/v1/users/{user_id}/keys", headers=admin_headers, json={"label": "k", "monthly_token_budget": 5}).json()["secret"]
 
     respx.route(host="testserver").pass_through()
-    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 10, "output_tokens": 0}}))
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 10, "output_tokens": 0}}))
 
-    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
     assert first.status_code == 200  # consumes 10 tokens (over the budget of 5)
-    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
     assert second.status_code == 403
 
 
@@ -2197,12 +2315,12 @@ def test_per_user_rate_limit_across_keys(client, admin_headers, seed_account):
     key_b = client.post(f"/api/v1/users/{user_id}/keys", headers=admin_headers, json={"label": "b"}).json()["secret"]
 
     respx.route(host="testserver").pass_through()
-    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 1, "output_tokens": 1}}))
 
-    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_a}"}, json={"model": "gpt-5.4"})
+    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_a}"}, json={"model": "gpt-6-sol"})
     assert first.status_code == 200
     # Second request via a DIFFERENT key of the same user is still blocked by the per-user cap.
-    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_b}"}, json={"model": "gpt-5.4"})
+    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_b}"}, json={"model": "gpt-6-sol"})
     assert second.status_code == 429
 
 
@@ -2214,12 +2332,12 @@ def test_per_user_monthly_budget_across_keys(client, admin_headers, seed_account
     key_b = client.post(f"/api/v1/users/{user_id}/keys", headers=admin_headers, json={"label": "b"}).json()["secret"]
 
     respx.route(host="testserver").pass_through()
-    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 10, "output_tokens": 0}}))
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 10, "output_tokens": 0}}))
 
-    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_a}"}, json={"model": "gpt-5.4"})
+    first = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_a}"}, json={"model": "gpt-6-sol"})
     assert first.status_code == 200  # consumes 10 tokens (over the budget of 5)
     # A DIFFERENT key of the same user is now blocked because the user's monthly budget is exhausted.
-    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_b}"}, json={"model": "gpt-5.4"})
+    second = client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key_b}"}, json={"model": "gpt-6-sol"})
     assert second.status_code == 403
 
 
@@ -2253,7 +2371,7 @@ def test_stats_endpoints_reflect_usage(client, admin_headers, seed_account, make
         return_value=httpx.Response(
             200,
             json={
-                "model": "gpt-5.4",
+                "model": "gpt-6-sol",
                 "usage": {
                     "input_tokens": 6,
                     "output_tokens": 3,
@@ -2262,7 +2380,7 @@ def test_stats_endpoints_reflect_usage(client, admin_headers, seed_account, make
             },
         )
     )
-    client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
 
     overview = client.get("/api/v1/stats/overview", headers=admin_headers).json()
     assert overview["total_accounts"] == 1
@@ -2306,7 +2424,7 @@ def test_model_mix_uses_routed_model_instead_of_provider_response_label(
         return_value=httpx.Response(
             200,
             json={
-                "model": "gpt-5.6-luna",
+                "model": "gpt-6-luna",
                 "usage": {"input_tokens": 10, "output_tokens": 2},
             },
         )
@@ -2323,14 +2441,14 @@ def test_model_mix_uses_routed_model_instead_of_provider_response_label(
         usage_row = db.query(UsageRecordDb).one()
         # Mirror a streaming provider that reports an internal model alias in
         # its terminal usage payload while the proxy routed Astra.
-        usage_row.model = "gpt-5.6-luna"
+        usage_row.model = "gpt-6-luna"
         db.commit()
 
     response = client.get("/api/v1/stats/model-mix", headers=admin_headers)
     assert response.status_code == 200, response.text
     assert response.json()["users"][0]["models"] == [
         {
-            "model": "gpt-6-astra",
+            "model": "gpt-6-sol",
             "requests": 1,
             "input_tokens": 10,
             "output_tokens": 2,
@@ -2406,8 +2524,8 @@ def test_stats_range_filter(client, admin_headers, seed_account, make_user):
     key = make_user("ivan")
 
     respx.route(host="testserver").pass_through()
-    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-5.4", "usage": {"input_tokens": 6, "output_tokens": 3}}))
-    client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-5.4"})
+    respx.post(CODEX_RESPONSES).mock(return_value=httpx.Response(200, json={"model": "gpt-6-sol", "usage": {"input_tokens": 6, "output_tokens": 3}}))
+    client.post("/api/v1/responses", headers={"Authorization": f"Bearer {key}"}, json={"model": "gpt-6-sol"})
 
     now = datetime.now(timezone.utc)
     future = (now + timedelta(hours=1)).isoformat()

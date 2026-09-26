@@ -166,6 +166,10 @@ class UserDb(DatabaseBase):
     allowed_models_json = Column(Text, nullable=True)
     # Requested model ID -> upstream model ID, scoped to this user.
     model_overrides_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    preset_id = Column(UUID(as_uuid=True), nullable=True)
+    preset_overrides_json = Column(Text, nullable=False, default="[]", server_default="[]")
+    model_reasoning_levels_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    model_request_modes_json = Column(Text, nullable=False, default="{}", server_default="{}")
     created_at = Column(DateTime(timezone=True), nullable=False)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -176,6 +180,20 @@ class UserDb(DatabaseBase):
 
     def __repr__(self):
         return f"<User(id={self.id}, name={self.name})>"
+
+
+class PresetDb(DatabaseBase):
+    __tablename__ = "presets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True)
+    name = Column(VARCHAR(120), nullable=False, unique=True)
+    allowed_models_json = Column(Text, nullable=True)
+    allowed_reasoning_levels_json = Column(Text, nullable=False, server_default=request_policy.DEFAULT_REASONING_LEVELS_JSON)
+    allowed_request_modes_json = Column(Text, nullable=False, server_default=request_policy.DEFAULT_REQUEST_MODES_JSON)
+    model_overrides_json = Column(Text, nullable=False, server_default="{}")
+    model_reasoning_levels_json = Column(Text, nullable=False, server_default="{}")
+    model_request_modes_json = Column(Text, nullable=False, server_default="{}")
+    created_at = Column(DateTime(timezone=True), nullable=False)
 
 
 class DashboardMemberDb(DatabaseBase):

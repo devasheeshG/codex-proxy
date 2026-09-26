@@ -2,16 +2,18 @@
 # Description: Proxy user management -- users own one or more API keys. Create/update/delete users, mint and manage
 #              their keys (one-time secret reveal), and report each user's month-to-date token/request usage. Admin-only.
 
+import json
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.logger import get_logger
 from app.model_catalog import configured_model_ids
-from app.utils import request_policy, security, usage
+from app.utils import presets, request_policy, security, usage
 from app.utils.models.api import (
     ApiKey,
     ApiKeyCreatedResponse,
@@ -28,12 +30,37 @@ from app.utils.models.api import (
     User,
     UserResponse,
 )
-from app.utils.postgres import ApiKeyDb, UsageRecordDb, UserDb, get_db
+from app.utils.postgres import ApiKeyDb, PresetDb, UsageRecordDb, UserDb, get_db
 
 # Get the logger
 logger = get_logger()
 
 router = APIRouter(tags=["Users"], prefix="/users")
+
+
+class AssignPresetRequest(BaseModel):
+    preset_id: uuid.UUID
+    preserve_overrides: bool = False
+
+
+def _track_policy_override(db: Session, user: UserDb, field: str) -> None:
+    if user.preset_id is None:
+        return
+    preset = db.query(PresetDb).filter(PresetDb.id == user.preset_id).first()
+    if preset is None:
+        return
+    overrides = presets.overridden_fields(user)
+    column = presets.POLICY_COLUMNS[field]
+    user_value = getattr(user, column)
+    preset_value = getattr(preset, column)
+    if column.endswith("_json") and user_value is not None and preset_value is not None:
+        user_value = json.loads(user_value)
+        preset_value = json.loads(preset_value)
+    if user_value == preset_value:
+        overrides.discard(field)
+    else:
+        overrides.add(field)
+    presets.set_overridden_fields(user, overrides)
 
 
 def _build_user(db: Session, user: UserDb) -> User:
@@ -216,8 +243,24 @@ def create_user(
         ),
         allowed_models_json=(request_policy.encode_models(request.allowed_models) if request.allowed_models is not None else None),
         model_overrides_json=request_policy.encode_model_overrides(request.model_overrides),
+        model_reasoning_levels_json=json.dumps(request.model_reasoning_levels, separators=(",", ":")),
+        model_request_modes_json=json.dumps(request.model_request_modes, separators=(",", ":")),
         created_at=datetime.now(timezone.utc),
     )
+    selected_preset = (
+        db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
+        if request.preset_id
+        else db.query(PresetDb).order_by(PresetDb.created_at).first()
+    )
+    if request.preset_id and selected_preset is None:
+        raise HTTPException(status_code=404, detail="Preset not found")
+    if selected_preset:
+        user.preset_id = selected_preset.id
+        for field in presets.POLICY_COLUMNS:
+            if field not in request.model_fields_set:
+                setattr(user, presets.POLICY_COLUMNS[field], getattr(selected_preset, presets.POLICY_COLUMNS[field]))
+            else:
+                _track_policy_override(db, user, field)
     db.add(user)
     db.commit()
 
@@ -271,19 +314,68 @@ def update_user(
             request.allowed_request_modes,
             request_policy.ALL_REQUEST_MODES,
         )
+        _track_policy_override(db, user, "allowed_request_modes")
     if request.allowed_reasoning_levels is not None:
         user.allowed_reasoning_levels_json = request_policy.encode_choices(
             request.allowed_reasoning_levels,
             request_policy.ALL_REASONING_LEVELS,
         )
+        _track_policy_override(db, user, "allowed_reasoning_levels")
     if "allowed_models" in request.model_fields_set:
         user.allowed_models_json = request_policy.encode_models(request.allowed_models) if request.allowed_models is not None else None
+        _track_policy_override(db, user, "allowed_models")
     if "model_overrides" in request.model_fields_set:
         user.model_overrides_json = request_policy.encode_model_overrides(request.model_overrides or {})
+        _track_policy_override(db, user, "model_overrides")
+    if "model_reasoning_levels" in request.model_fields_set:
+        user.model_reasoning_levels_json = json.dumps(request.model_reasoning_levels or {}, separators=(",", ":"))
+        _track_policy_override(db, user, "model_reasoning_levels")
+    if "model_request_modes" in request.model_fields_set:
+        user.model_request_modes_json = json.dumps(request.model_request_modes or {}, separators=(",", ":"))
+        _track_policy_override(db, user, "model_request_modes")
 
     db.commit()
 
     logger.info(f"Updated user '{user.name}'")
+    return UserResponse(user=_build_user(db, user))
+
+
+@router.put("/{user_id}/preset", response_model=UserResponse)
+def assign_user_preset(
+    user_id: uuid.UUID,
+    request: AssignPresetRequest,
+    _: str = Depends(security.require_admin),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> UserResponse:
+    user = db.query(UserDb).filter(UserDb.id == user_id).with_for_update().first()
+    preset = db.query(PresetDb).filter(PresetDb.id == request.preset_id).first()
+    if user is None or preset is None:
+        raise HTTPException(status_code=404, detail="User or preset not found")
+    presets.apply_preset(user, preset, preserve_overrides=request.preserve_overrides)
+    db.commit()
+    return UserResponse(user=_build_user(db, user))
+
+
+@router.delete("/{user_id}/preset-overrides/{field}", response_model=UserResponse)
+def clear_user_preset_override(
+    user_id: uuid.UUID,
+    field: str,
+    _: str = Depends(security.require_admin),  # noqa: B008
+    db: Session = Depends(get_db),  # noqa: B008
+) -> UserResponse:
+    if field not in presets.POLICY_COLUMNS:
+        raise HTTPException(status_code=404, detail="Unknown preset field")
+    user = db.query(UserDb).filter(UserDb.id == user_id).with_for_update().first()
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    preset = db.query(PresetDb).filter(PresetDb.id == user.preset_id).first()
+    if preset is None:
+        raise HTTPException(status_code=409, detail="User has no preset")
+    overrides = presets.overridden_fields(user)
+    overrides.discard(field)
+    presets.set_overridden_fields(user, overrides)
+    setattr(user, presets.POLICY_COLUMNS[field], getattr(preset, presets.POLICY_COLUMNS[field]))
+    db.commit()
     return UserResponse(user=_build_user(db, user))
 
 

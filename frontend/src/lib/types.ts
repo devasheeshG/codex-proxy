@@ -400,6 +400,18 @@ export interface NotificationSettings {
 export type RequestMode = "standard" | "fast" | "ultrafast";
 export type ReasoningLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
+export interface Preset {
+    id: string;
+    name: string;
+    user_count: number;
+    allowed_models: string[] | null;
+    allowed_reasoning_levels: ReasoningLevel[];
+    allowed_request_modes: RequestMode[];
+    model_overrides: Record<string, string>;
+    model_reasoning_levels: Record<string, ReasoningLevel[]>;
+    model_request_modes: Record<string, RequestMode[]>;
+}
+
 export interface User {
     id: string;
     name: string;
@@ -421,6 +433,10 @@ export interface User {
     allowed_models: string[] | null;
     // Client-facing model ID -> upstream model ID.
     model_overrides: Record<string, string>;
+    preset_id: string | null;
+    preset_overrides: string[];
+    model_reasoning_levels: Record<string, ReasoningLevel[]>;
+    model_request_modes: Record<string, RequestMode[]>;
     last_used_at: string | null;
     created_at: string;
     total_tokens: number;

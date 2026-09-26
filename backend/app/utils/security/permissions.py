@@ -81,7 +81,15 @@ def required_permission(path: str, method: str) -> str | None:
         if method == "DELETE":
             return "accounts:delete"
         return "accounts:write"
+    if normalized == "/presets" or normalized.startswith("/presets/"):
+        if method == "GET":
+            return "proxy_users:read"
+        if method == "DELETE":
+            return "proxy_users:delete"
+        return "proxy_users:write"
     if normalized.startswith("/users"):
+        if "/preset-overrides/" in normalized or normalized.endswith("/preset"):
+            return "proxy_users:write"
         if "/keys/" in normalized:
             if method == "GET":
                 return "api_keys:read"

@@ -20,7 +20,7 @@ def _metadata(*, stream=False, include_usage=False, restore=None):
 def test_request_translation_preserves_messages_images_tools_and_json_schema():
     long_name = f"mcp__filesystem__{'read_file_' * 8}"
     request = {
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "messages": [
             {"role": "system", "content": "Be precise."},
             {
@@ -78,7 +78,7 @@ def test_request_translation_preserves_messages_images_tools_and_json_schema():
 
     translated, metadata = chat_completions.request_to_responses(request)
 
-    assert translated["model"] == "gpt-5.6-sol"
+    assert translated["model"] == "gpt-6-sol"
     assert translated["stream"] is True
     assert translated["store"] is False
     assert "max_output_tokens" not in translated
@@ -129,7 +129,7 @@ def test_request_translation_preserves_messages_images_tools_and_json_schema():
     ],
 )
 def test_request_translation_fails_closed_for_unsupported_semantics(change, param):
-    request = {"model": "gpt-5.6-sol", "messages": [{"role": "user", "content": "hello"}], **change}
+    request = {"model": "gpt-6-sol", "messages": [{"role": "user", "content": "hello"}], **change}
     with pytest.raises(chat_completions.ChatCompletionTranslationError) as exc:
         chat_completions.request_to_responses(request)
     assert exc.value.param == param
@@ -139,7 +139,7 @@ def test_request_translation_rejects_audio_input_and_accepts_legacy_functions():
     with pytest.raises(chat_completions.ChatCompletionTranslationError, match="Audio input"):
         chat_completions.request_to_responses(
             {
-                "model": "gpt-5.6-sol",
+                "model": "gpt-6-sol",
                 "messages": [
                     {
                         "role": "user",
@@ -151,7 +151,7 @@ def test_request_translation_rejects_audio_input_and_accepts_legacy_functions():
 
     translated, _ = chat_completions.request_to_responses(
         {
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-sol",
             "messages": [{"role": "user", "content": "hello"}],
             "functions": [{"name": "lookup", "parameters": {"type": "object"}}],
             "function_call": {"name": "lookup"},
@@ -167,7 +167,7 @@ def test_terminal_response_translation_preserves_text_tools_reasoning_and_usage(
         "object": "response",
         "created_at": 123456,
         "status": "completed",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "service_tier": "priority",
         "output": [
             {"type": "reasoning", "summary": [{"type": "summary_text", "text": "Checked the image."}]},
@@ -219,13 +219,13 @@ def test_stream_translation_handles_split_frames_text_tools_usage_and_done():
     terminal = {
         "id": "resp_stream",
         "created_at": 222,
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "status": "completed",
         "output": [{"type": "function_call", "id": "item_1", "call_id": "call_1", "name": "short", "arguments": '{"x":1}'}],
         "usage": {"input_tokens": 7, "output_tokens": 3, "total_tokens": 10},
     }
     events = [
-        {"type": "response.created", "response": {"id": "resp_stream", "created_at": 222, "model": "gpt-5.6-sol"}},
+        {"type": "response.created", "response": {"id": "resp_stream", "created_at": 222, "model": "gpt-6-sol"}},
         {"type": "response.output_text.delta", "delta": "Working "},
         {
             "type": "response.output_item.added",
@@ -271,7 +271,7 @@ def test_chat_completions_endpoint_translates_nonstreaming_images_and_tool_respo
         "object": "response",
         "created_at": 333,
         "status": "completed",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "output": [{"type": "function_call", "call_id": "call_weather", "name": "weather", "arguments": '{"city":"Delhi"}'}],
         "usage": {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
     }
@@ -302,7 +302,7 @@ def test_chat_completions_endpoint_translates_nonstreaming_images_and_tool_respo
         "/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
         json={
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-sol",
             "messages": [
                 {
                     "role": "user",
@@ -344,12 +344,12 @@ def test_chat_completions_endpoint_translates_streaming_tool_calls_and_usage(
         "id": "resp_route_stream",
         "created_at": 444,
         "status": "completed",
-        "model": "gpt-5.6-sol",
+        "model": "gpt-6-sol",
         "output": [{"type": "function_call", "id": "item_route", "call_id": "call_route", "name": "lookup", "arguments": '{"q":"x"}'}],
         "usage": {"input_tokens": 20, "output_tokens": 8, "total_tokens": 28},
     }
     events = [
-        {"type": "response.created", "response": {"id": "resp_route_stream", "created_at": 444, "model": "gpt-5.6-sol"}},
+        {"type": "response.created", "response": {"id": "resp_route_stream", "created_at": 444, "model": "gpt-6-sol"}},
         {
             "type": "response.output_item.added",
             "item": {"type": "function_call", "id": "item_route", "call_id": "call_route", "name": "lookup", "arguments": ""},
@@ -365,7 +365,7 @@ def test_chat_completions_endpoint_translates_streaming_tool_calls_and_usage(
         "/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
         json={
-            "model": "gpt-5.6-sol",
+            "model": "gpt-6-sol",
             "messages": [{"role": "user", "content": "Look it up"}],
             "tools": [{"type": "function", "function": {"name": "lookup", "parameters": {"type": "object"}}}],
             "stream": True,
@@ -395,7 +395,7 @@ def test_chat_completions_validation_uses_openai_error_shape_without_upstream_ca
     response = client.post(
         "/api/v1/chat/completions",
         headers={"Authorization": f"Bearer {key}"},
-        json={"model": "gpt-5.6-sol", "messages": [{"role": "user", "content": "hello"}], "n": 2},
+        json={"model": "gpt-6-sol", "messages": [{"role": "user", "content": "hello"}], "n": 2},
     )
 
     assert response.status_code == 400
@@ -407,6 +407,6 @@ def test_chat_completions_validation_uses_openai_error_shape_without_upstream_ca
 def test_chat_completions_requires_user_key(client):
     response = client.post(
         "/api/v1/chat/completions",
-        json={"model": "gpt-5.6-sol", "messages": [{"role": "user", "content": "hello"}]},
+        json={"model": "gpt-6-sol", "messages": [{"role": "user", "content": "hello"}]},
     )
     assert response.status_code == 401

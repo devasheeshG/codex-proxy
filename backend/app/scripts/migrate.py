@@ -2,13 +2,16 @@
 # Description: Normalize the former schema-equivalent Alembic head, then upgrade to the canonical head.
 
 import json
+import uuid
+from collections import Counter
+from datetime import datetime, timezone
 
 from alembic.config import Config
 from sqlalchemy import inspect, text
 
 from alembic import command
 from app.utils import egress
-from app.utils.postgres import OpenAIFallbackDb, ProxyEventDb
+from app.utils.postgres import OpenAIFallbackDb, PresetDb, ProxyEventDb
 from app.utils.postgres.base import engine, init_database
 
 CANONICAL_REVISION = "001"
@@ -71,6 +74,15 @@ def sync_canonical_schema() -> None:
         for column_name, column_type in user_policy_columns.items():
             if column_name not in user_columns:
                 connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"))
+        preset_columns = {
+            "preset_id": "UUID",
+            "preset_overrides_json": "TEXT NOT NULL DEFAULT '[]'",
+            "model_reasoning_levels_json": "TEXT NOT NULL DEFAULT '{}'",
+            "model_request_modes_json": "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for column_name, column_type in preset_columns.items():
+            if column_name not in user_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"))
         # Revision 006 granted the built-in auto-review model to every
         # restricted user. Preserve that data migration for databases that
         # were stamped from an earlier historical head before the squash.
@@ -99,6 +111,48 @@ def sync_canonical_schema() -> None:
             )
         )
         connection.execute(text('ALTER TABLE users ALTER COLUMN allowed_request_modes_json SET DEFAULT \'["standard","fast","ultrafast"]\''))
+        PresetDb.__table__.create(connection, checkfirst=True)
+        preset_fields = (
+            "allowed_models_json",
+            "allowed_reasoning_levels_json",
+            "allowed_request_modes_json",
+            "model_overrides_json",
+            "model_reasoning_levels_json",
+            "model_request_modes_json",
+        )
+        existing_preset = connection.execute(text("SELECT id FROM presets ORDER BY created_at LIMIT 1")).scalar()
+        if existing_preset is None:
+            existing_users = connection.execute(text(f"SELECT id, {', '.join(preset_fields)} FROM users")).mappings().all()
+            defaults = {
+                "allowed_models_json": None,
+                "allowed_reasoning_levels_json": '["none","minimal","low","medium","high","xhigh","max"]',
+                "allowed_request_modes_json": '["standard","fast","ultrafast"]',
+                "model_overrides_json": '{"gpt-6-astra":"gpt-6-sol"}',
+                "model_reasoning_levels_json": "{}",
+                "model_request_modes_json": "{}",
+            }
+            baseline = {
+                field: Counter(row[field] for row in existing_users).most_common(1)[0][0] if existing_users else default
+                for field, default in defaults.items()
+            }
+            existing_preset = uuid.uuid4()
+            connection.execute(
+                text(
+                    f"INSERT INTO presets (id, name, {', '.join(preset_fields)}, created_at) "
+                    f"VALUES (:id, :name, {', '.join(':' + field for field in preset_fields)}, :created_at)"
+                ),
+                {"id": existing_preset, "name": "Current configuration", **baseline, "created_at": datetime.now(timezone.utc)},
+            )
+        else:
+            baseline = (
+                connection.execute(text(f"SELECT {', '.join(preset_fields)} FROM presets WHERE id = :id"), {"id": existing_preset}).mappings().one()
+            )
+        for row in connection.execute(text(f"SELECT id, {', '.join(preset_fields)} FROM users WHERE preset_id IS NULL")).mappings():
+            overrides = [field.removesuffix("_json") for field in preset_fields if row[field] != baseline[field]]
+            connection.execute(
+                text("UPDATE users SET preset_id = :preset_id, preset_overrides_json = :overrides WHERE id = :id"),
+                {"preset_id": existing_preset, "overrides": json.dumps(overrides), "id": row["id"]},
+            )
 
         # Existing installations are already stamped at the squashed 001 head,
         # so additive fields introduced after the squash must be reconciled
