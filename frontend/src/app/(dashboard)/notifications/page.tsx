@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-    BellRing,
     Bot,
     Check,
     ChevronDown,
@@ -520,24 +519,14 @@ export default function NotificationsPage() {
 
     return (
         <div className="space-y-7">
-            <header className="border-ink-700 bg-ink-850 relative overflow-hidden rounded-2xl border px-6 py-6 sm:px-7">
-                <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-80 opacity-25 sm:block">
-                    <div className="from-brand-400 absolute top-1/2 right-8 h-px w-56 bg-gradient-to-l to-transparent" />
-                </div>
-                <div className="relative flex items-start gap-4">
-                    <div className="border-brand-400/30 bg-brand-500/10 text-brand-300 flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border">
-                        <BellRing size={21} strokeWidth={1.7} />
-                    </div>
-                    <div>
-                        <h1 className="text-fog-100 font-serif text-2xl font-semibold tracking-tight">
-                            Notification routing
-                        </h1>
-                        <p className="text-fog-400 mt-1 max-w-2xl text-sm leading-relaxed">
-                            Choose which operational signals leave the proxy, where they land, and
-                            the exact words they carry.
-                        </p>
-                    </div>
-                </div>
+            <header>
+                <h1 className="text-fog-100 font-serif text-2xl font-semibold tracking-tight">
+                    Notification routing
+                </h1>
+                <p className="text-fog-400 mt-0.5 text-sm">
+                    Choose which operational signals leave the proxy, where they land, and the exact
+                    words they carry.
+                </p>
             </header>
 
             {error ? (
