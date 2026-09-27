@@ -30,6 +30,7 @@ import {
 } from "@/lib/types";
 import {
     formatCostUsd,
+    formatCountdown,
     formatDateTime,
     formatNumber,
     formatTokens,
@@ -911,7 +912,7 @@ function QuotaAverageCell({
             </div>
             <div className="text-fog-400 mt-1 text-xs">average used</div>
             <div className="text-fog-400 mt-2 text-xs">
-                {resetAt ? `next reset ${formatDateTime(resetAt)}` : "next reset unavailable"}
+                {resetAt ? formatCountdown(resetAt) : "reset time unavailable"}
             </div>
             <div
                 className="bg-ink-700 mt-5 h-2 overflow-hidden rounded-full"
