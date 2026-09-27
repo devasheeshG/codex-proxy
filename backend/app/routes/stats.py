@@ -165,8 +165,22 @@ def overview(
         values = [getattr(account, field) for account in active_accounts if getattr(account, field) is not None]
         return round(sum(values) / len(values) * 100.0, 2) if values else 0.0
 
+    def earliest_reset_at(field: str) -> datetime | None:
+        resets: list[datetime] = []
+        for account in active_accounts:
+            reset_at = getattr(account, field)
+            if reset_at is None:
+                continue
+            if reset_at.tzinfo is None:
+                reset_at = reset_at.replace(tzinfo=timezone.utc)
+            if reset_at > now:
+                resets.append(reset_at)
+        return min(resets, default=None)
+
     five_hour_average_pct = average_window_pct("five_hour_used_pct")
     weekly_average_pct = average_window_pct("weekly_used_pct")
+    five_hour_reset_at = earliest_reset_at("five_hour_reset_at")
+    weekly_reset_at = earliest_reset_at("weekly_reset_at")
     if active_accounts:
         pool_used_pct = round(
             sum(max(0.0, min(1.0, rotation.account_load(account))) for account in active_accounts) / len(active_accounts),
@@ -188,6 +202,8 @@ def overview(
         usable_accounts=len(usable_accounts),
         five_hour_average_pct=five_hour_average_pct,
         weekly_average_pct=weekly_average_pct,
+        five_hour_reset_at=five_hour_reset_at,
+        weekly_reset_at=weekly_reset_at,
         pool_used_pct=pool_used_pct,
         pool_remaining_pct=pool_remaining_pct,
         total_users=db.query(UserDb).count(),

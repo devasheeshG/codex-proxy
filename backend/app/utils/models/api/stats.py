@@ -142,6 +142,9 @@ class OverviewResponse(BaseModel):
     usable_accounts: int
     five_hour_average_pct: float
     weekly_average_pct: float
+    # Earliest upcoming reset among active (authenticated and enabled) accounts.
+    five_hour_reset_at: Optional[datetime]
+    weekly_reset_at: Optional[datetime]
     # Current active-pool capacity (0..1), independent of the selected analytics range.
     pool_used_pct: float
     pool_remaining_pct: float

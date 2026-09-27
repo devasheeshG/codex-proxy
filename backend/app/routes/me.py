@@ -56,30 +56,29 @@ def build_pool_status(db: Session, now: datetime | None = None) -> PoolStatus | 
     """
     now = now or datetime.now(timezone.utc)
     all_accounts = db.query(AccountDb).all()
-    available_accounts = [account for account in all_accounts if rotation.is_available(account, now)]
-    # Keep telemetry visible while the whole pool is exhausted/cooling down;
-    # disabled and reauthentication-required accounts do not contribute capacity.
-    if not available_accounts:
-        available_accounts = [
-            account for account in all_accounts if account.status.value != "DISABLED" and account.provider_health.value != "REAUTH_REQUIRED"
-        ]
-    if not available_accounts:
+    # Usage limits describe the full active pool, not just accounts that are
+    # immediately selectable for the next request. A cooldown account remains
+    # authenticated and enabled, so its quota and reset must be included.
+    active_accounts = [
+        account for account in all_accounts if account.status.value != "DISABLED" and account.provider_health.value != "REAUTH_REQUIRED"
+    ]
+    if not active_accounts:
         return None
 
     five_hour = _aggregate_window(
-        available_accounts,
+        active_accounts,
         "five_hour_used_pct",
         "five_hour_reset_at",
         now,
     )
     weekly = _aggregate_window(
-        available_accounts,
+        active_accounts,
         "weekly_used_pct",
         "weekly_reset_at",
         now,
     )
     return PoolStatus(
-        account_count=len(available_accounts),
+        account_count=len(active_accounts),
         five_hour=five_hour,
         weekly=weekly,
         accounts=[
@@ -93,7 +92,7 @@ def build_pool_status(db: Session, now: datetime | None = None) -> PoolStatus | 
                 weekly_used_pct=account.weekly_used_pct,
                 weekly_reset_at=account.weekly_reset_at,
             )
-            for account in sorted(available_accounts, key=rotation.account_selection_key)
+            for account in sorted(active_accounts, key=rotation.account_selection_key)
         ],
     )
 
@@ -111,7 +110,7 @@ def my_usage(
     key: ApiKeyDb = Depends(security.authenticate_user),  # noqa: B008
     db: Session = Depends(get_db),  # noqa: B008
 ) -> MeUsageResponse:
-    """Report the calling key's usage and average headroom across the currently available pool."""
+    """Report the calling key's usage and average limits across the active account pool."""
     now = datetime.now(timezone.utc)
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)

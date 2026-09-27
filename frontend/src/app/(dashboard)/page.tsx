@@ -871,11 +871,13 @@ function QuotaAverages({ stats }: { stats: OverviewStats }) {
             <QuotaAverageCell
                 label="Average 5-hour limit"
                 usedPct={stats.five_hour_average_pct}
+                resetAt={stats.five_hour_reset_at}
                 accountLabel={accountLabel}
             />
             <QuotaAverageCell
                 label="Average weekly limit"
                 usedPct={stats.weekly_average_pct}
+                resetAt={stats.weekly_reset_at}
                 accountLabel={accountLabel}
                 divided
             />
@@ -886,11 +888,13 @@ function QuotaAverages({ stats }: { stats: OverviewStats }) {
 function QuotaAverageCell({
     label,
     usedPct,
+    resetAt,
     accountLabel,
     divided = false,
 }: {
     label: string;
     usedPct: number;
+    resetAt: string | null;
     accountLabel: string;
     divided?: boolean;
 }) {
@@ -906,6 +910,9 @@ function QuotaAverageCell({
                 {percentage.toFixed(1)}%
             </div>
             <div className="text-fog-400 mt-1 text-xs">average used</div>
+            <div className="text-fog-400 mt-2 text-xs">
+                {resetAt ? `next reset ${formatDateTime(resetAt)}` : "next reset unavailable"}
+            </div>
             <div
                 className="bg-ink-700 mt-5 h-2 overflow-hidden rounded-full"
                 role="progressbar"

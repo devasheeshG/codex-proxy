@@ -2274,7 +2274,7 @@ def test_me_usage_reports_own_usage_and_pool(client, admin_headers, seed_account
     assert me_after["requests_this_month"] == 1
 
 
-def test_me_usage_aggregates_available_pool(client, seed_account, make_user):
+def test_me_usage_aggregates_active_pool_and_earliest_reset(client, seed_account, make_user):
     from datetime import datetime, timedelta, timezone
 
     from app.utils.models.api import AccountStatus, ProviderHealth
@@ -2284,33 +2284,44 @@ def test_me_usage_aggregates_available_pool(client, seed_account, make_user):
     first_id = seed_account("first", five_hour_used_pct=0.2, weekly_used_pct=0.3)
     second_id = seed_account("second", five_hour_used_pct=0.6, weekly_used_pct=0.5)
     seed_account("disabled", five_hour_used_pct=0.0, status=AccountStatus.DISABLED)
-    seed_account("exhausted", five_hour_used_pct=0.95, rotation_threshold=0.9)
+    exhausted_id = seed_account("exhausted", five_hour_used_pct=0.95, rotation_threshold=0.9)
     reauth_id = seed_account("reauth", five_hour_used_pct=0.1)
     unknown_id = seed_account("unknown", five_hour_used_pct=0.0, weekly_used_pct=0.0)
     key = make_user("pool-user")
 
     now = datetime.now(timezone.utc)
+    exhausted_reset = now + timedelta(hours=1)
     second_reset = now + timedelta(hours=2)
+    weekly_exhausted_reset = now + timedelta(hours=2)
+    weekly_second_reset = now + timedelta(hours=3)
+    weekly_first_reset = now + timedelta(hours=6)
     with SessionFactory() as db:
         db.get(AccountDb, first_id).five_hour_reset_at = now + timedelta(hours=4)
         db.get(AccountDb, second_id).five_hour_reset_at = second_reset
+        db.get(AccountDb, exhausted_id).five_hour_reset_at = exhausted_reset
+        db.get(AccountDb, first_id).weekly_reset_at = weekly_first_reset
+        db.get(AccountDb, second_id).weekly_reset_at = weekly_second_reset
+        db.get(AccountDb, exhausted_id).weekly_reset_at = weekly_exhausted_reset
         db.get(AccountDb, reauth_id).provider_health = ProviderHealth.REAUTH_REQUIRED
         db.get(AccountDb, unknown_id).five_hour_used_pct = None
         db.get(AccountDb, unknown_id).weekly_used_pct = None
         db.commit()
 
     pool = client.get("/api/v1/me/usage", headers={"Authorization": f"Bearer {key}"}).json()["pool"]
-    assert pool["account_count"] == 3
-    assert pool["five_hour"]["known_account_count"] == 2
+    assert pool["account_count"] == 4
+    assert pool["five_hour"]["known_account_count"] == 3
     assert pool["five_hour"]["unknown_account_count"] == 1
-    assert pool["weekly"]["known_account_count"] == 2
+    assert pool["weekly"]["known_account_count"] == 3
     assert pool["weekly"]["unknown_account_count"] == 1
-    assert pool["five_hour"]["used_pct"] == 0.4
-    assert pool["weekly"]["used_pct"] == 0.4
+    assert pool["five_hour"]["used_pct"] == 0.583333
+    assert pool["weekly"]["used_pct"] == 0.266667
     reset_values = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in pool["five_hour"]["reset_at"]]
-    assert reset_values == [second_reset, now + timedelta(hours=4)]
-    assert datetime.fromisoformat(pool["five_hour"]["next_reset_at"].replace("Z", "+00:00")) == second_reset
-    assert len(pool["accounts"]) == 3
+    assert reset_values == [exhausted_reset, second_reset, now + timedelta(hours=4)]
+    assert datetime.fromisoformat(pool["five_hour"]["next_reset_at"].replace("Z", "+00:00")) == exhausted_reset
+    weekly_reset_values = [datetime.fromisoformat(value.replace("Z", "+00:00")) for value in pool["weekly"]["reset_at"]]
+    assert weekly_reset_values == [weekly_exhausted_reset, weekly_second_reset, weekly_first_reset]
+    assert datetime.fromisoformat(pool["weekly"]["next_reset_at"].replace("Z", "+00:00")) == weekly_exhausted_reset
+    assert len(pool["accounts"]) == 4
 
 
 def test_me_usage_requires_key(client):
@@ -2613,6 +2624,8 @@ def test_model_mix_uses_routed_model_instead_of_provider_response_label(
 
 
 def test_overview_aggregates_active_pool_capacity(client, admin_headers, seed_account):
+    from datetime import datetime, timedelta, timezone
+
     from app.utils.models.api import AccountStatus, ProviderHealth
     from app.utils.postgres import AccountDb
     from app.utils.postgres.base import SessionFactory
@@ -2642,11 +2655,16 @@ def test_overview_aggregates_active_pool_capacity(client, admin_headers, seed_ac
     )
     reauth_id = seed_account("reauth-required", five_hour_used_pct=0.2, weekly_used_pct=0.25)
 
+    now = datetime.now(timezone.utc)
     with SessionFactory() as db:
         db.query(AccountDb).filter(AccountDb.id.in_([*usable_ids, disabled_id, exhausted_id, cooldown_id])).update(
             {AccountDb.provider_health: ProviderHealth.HEALTHY}
         )
         db.query(AccountDb).filter(AccountDb.id == reauth_id).update({AccountDb.provider_health: ProviderHealth.REAUTH_REQUIRED})
+        db.get(AccountDb, exhausted_id).five_hour_reset_at = now + timedelta(hours=1)
+        db.get(AccountDb, cooldown_id).weekly_reset_at = now + timedelta(hours=2)
+        db.get(AccountDb, usable_ids[0]).five_hour_reset_at = now + timedelta(hours=3)
+        db.get(AccountDb, usable_ids[1]).weekly_reset_at = now + timedelta(hours=4)
         db.commit()
 
     overview = client.get("/api/v1/stats/overview", headers=admin_headers).json()
@@ -2657,6 +2675,8 @@ def test_overview_aggregates_active_pool_capacity(client, admin_headers, seed_ac
     assert overview["weekly_average_pct"] == 12.5
     assert overview["pool_used_pct"] == 0.4625
     assert overview["pool_remaining_pct"] == 0.5375
+    assert datetime.fromisoformat(overview["five_hour_reset_at"].replace("Z", "+00:00")) == now + timedelta(hours=1)
+    assert datetime.fromisoformat(overview["weekly_reset_at"].replace("Z", "+00:00")) == now + timedelta(hours=2)
 
 
 def test_user_scoped_stats_hide_unselected_users(client, admin_headers, make_user):
