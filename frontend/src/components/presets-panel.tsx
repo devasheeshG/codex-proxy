@@ -27,7 +27,7 @@ function Chips<T extends string>({
             {values.map((value) => (
                 <label
                     key={value}
-                    className={`border-ink-700 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors ${selected.includes(value) ? "bg-brand-500/15 border-brand-500/60 text-brand-300" : "bg-ink-900 text-fog-400 hover:border-ink-500 hover:text-fog-100"}`}
+                    className="border-ink-700 bg-ink-900/60 text-fog-200 hover:border-ink-500 hover:text-fog-100 flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-xs transition-colors"
                 >
                     <input
                         type="checkbox"

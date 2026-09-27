@@ -116,32 +116,6 @@ function LimitBadges({ rate, budget }: { rate: number | null; budget: number | n
     );
 }
 
-function UserLimitBadges({ user }: { user: User }) {
-    const limits = [
-        user.rate_limit_per_minute ? `${formatNumber(user.rate_limit_per_minute)}/min` : null,
-        user.rate_limit_per_hour ? `${formatNumber(user.rate_limit_per_hour)}/hour` : null,
-        user.rate_limit_per_day ? `${formatNumber(user.rate_limit_per_day)}/day` : null,
-        user.monthly_token_budget ? `${formatTokens(user.monthly_token_budget)} tok/mo` : null,
-        user.lifetime_token_budget
-            ? `${formatTokens(user.lifetime_token_budget)} tok lifetime`
-            : null,
-        user.monthly_spend_budget_usd ? `${formatUsd(user.monthly_spend_budget_usd)}/mo` : null,
-        user.lifetime_spend_budget_usd
-            ? `${formatUsd(user.lifetime_spend_budget_usd)} lifetime`
-            : null,
-    ].filter((limit): limit is string => limit !== null);
-    if (limits.length === 0) return null;
-    return (
-        <span className="inline-flex flex-wrap gap-1.5">
-            {limits.map((limit) => (
-                <Badge key={limit} tone="neutral">
-                    {limit}
-                </Badge>
-            ))}
-        </span>
-    );
-}
-
 function BudgetBar({ used, budget }: { used: number; budget: number | null }) {
     if (!budget || budget <= 0) return null;
     const percentage = Math.min(Math.max(used / budget, 0), 1);
@@ -201,7 +175,6 @@ function MonthlyUsage({ user }: { user: User }) {
 }
 
 const REQUEST_MODES: RequestMode[] = ["standard", "fast", "ultrafast"];
-const requestModeLabel = (mode: RequestMode) => (mode === "ultrafast" ? "UltraFast" : mode);
 const REASONING_LEVELS: ReasoningLevel[] = [
     "none",
     "minimal",
@@ -212,28 +185,31 @@ const REASONING_LEVELS: ReasoningLevel[] = [
     "max",
 ];
 
-function PolicyBadges({ user }: { user: User }) {
+const PRESET_OVERRIDE_LABELS: Record<string, string> = {
+    allowed_models: "Models overridden",
+    allowed_request_modes: "Request modes overridden",
+    allowed_reasoning_levels: "Thinking levels overridden",
+    model_overrides: "Model rewrites overridden",
+    model_reasoning_levels: "Per-model thinking overridden",
+    model_request_modes: "Per-model modes overridden",
+};
+
+function PolicyBadges({ user, presetName }: { user: User; presetName?: string }) {
+    const overrideLabels = user.preset_id
+        ? user.preset_overrides.map(
+              (field) => PRESET_OVERRIDE_LABELS[field] ?? `${field} overridden`,
+          )
+        : [];
     return (
         <span className="inline-flex flex-wrap gap-1.5">
-            <Badge tone="neutral">
-                {user.allowed_request_modes.map(requestModeLabel).join(" + ")}
+            <Badge tone={user.preset_id ? "brand" : "neutral"}>
+                {user.preset_id ? `Preset: ${presetName ?? "Applied"}` : "No preset"}
             </Badge>
-            <Badge tone="neutral">
-                {user.allowed_reasoning_levels.length === REASONING_LEVELS.length
-                    ? "all thinking"
-                    : `${user.allowed_reasoning_levels.length} thinking`}
-            </Badge>
-            <Badge tone="neutral">
-                {user.allowed_models === null
-                    ? "all models"
-                    : `${user.allowed_models.length} model${user.allowed_models.length === 1 ? "" : "s"}`}
-            </Badge>
-            {Object.keys(user.model_overrides).length > 0 ? (
-                <Badge tone="brand">
-                    {Object.keys(user.model_overrides).length} model rewrite
-                    {Object.keys(user.model_overrides).length === 1 ? "" : "s"}
+            {overrideLabels.map((label) => (
+                <Badge key={label} tone="neutral">
+                    {label}
                 </Badge>
-            ) : null}
+            ))}
         </span>
     );
 }
@@ -737,15 +713,15 @@ export default function UsersPage() {
                                                                             <span className="text-fog-100 text-[15px] font-semibold tracking-tight">
                                                                                 {user.name}
                                                                             </span>
-                                                                            <Badge tone="neutral">
-                                                                                Priority{" "}
-                                                                                {user.priority ?? 4}
-                                                                            </Badge>
-                                                                            <UserLimitBadges
-                                                                                user={user}
-                                                                            />
                                                                             <PolicyBadges
                                                                                 user={user}
+                                                                                presetName={
+                                                                                    presets.find(
+                                                                                        (preset) =>
+                                                                                            preset.id ===
+                                                                                            user.preset_id,
+                                                                                    )?.name
+                                                                                }
                                                                             />
                                                                         </div>
                                                                         <div className="text-fog-400 mt-0.5 text-xs">
