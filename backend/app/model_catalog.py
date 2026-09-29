@@ -11,6 +11,7 @@ from collections.abc import Iterable
 from app.config import get_settings
 
 DEFAULT_MODEL_IDS: tuple[str, ...] = (
+    "gpt-5.5",
     "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",

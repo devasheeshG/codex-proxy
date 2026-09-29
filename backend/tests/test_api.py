@@ -228,6 +228,7 @@ def test_user_request_policy_can_be_customized(client, admin_headers):
     options = client.get("/api/v1/users/model-options", headers=admin_headers)
     assert options.status_code == 200, options.text
     assert options.json()["models"] == [
+        "gpt-5.5",
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -314,6 +315,7 @@ def test_refresh_model_options_returns_fixed_catalog_without_upstream_calls(clie
 
     assert response.status_code == 200, response.text
     assert response.json()["models"] == [
+        "gpt-5.5",
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -1304,6 +1306,7 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
     )
     assert response.status_code == 200
     assert [model["slug"] for model in response.json()["models"]] == [
+        "gpt-5.5",
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -1332,6 +1335,7 @@ def test_model_catalog_does_not_probe_pooled_accounts(client, seed_account, make
     response = client.get("/api/v1/models", headers={"Authorization": f"Bearer {key}"})
     assert response.status_code == 200
     assert {model["id"] for model in response.json()["data"]} == {
+        "gpt-5.5",
         "gpt-5.6-luna",
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -1458,6 +1462,7 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
     assert response.json() == {
         "object": "list",
         "data": [
+            {"id": "gpt-5.5", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-5.6-luna", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-5.6-sol", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-5.6-terra", "object": "model", "created": 0, "owned_by": "openai"},

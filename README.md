@@ -111,6 +111,7 @@ Codex catalog is:
 
 | Model | Notes |
 | --- | --- |
+| `gpt-5.5` | Legacy Codex text model |
 | `gpt-5.6-luna` | Codex GPT 5.6 family |
 | `gpt-5.6-sol` | Codex GPT 5.6 family |
 | `gpt-5.6-terra` | Codex GPT 5.6 family |
@@ -118,6 +119,11 @@ Codex catalog is:
 | `gpt-6-sol` | Codex GPT 6 family |
 | `gpt-6-luna` | Codex GPT 6 family |
 | `codex-auto-review` | Codex browser auto-review model |
+
+The proxy's catalog is the set of supported IDs; individual users can still
+have narrower model permissions through their preset or user overrides. New
+OpenAI API models are added only after they appear in the Codex subscription
+catalog for an active account.
 
 Model rewrites are shown in events as `target (requested)`, for example
 `gpt-5.6-sol (gpt-6-astra)`.
