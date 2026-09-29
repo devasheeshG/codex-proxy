@@ -122,6 +122,7 @@ def overview(
     clauses = _scope_clauses(start, end, rng.user_id, rng.model)
 
     requests = db.query(UsageRecordDb).filter(*clauses).count()
+    average_tps_value = db.query(func.avg(UsageRecordDb.tokens_per_second)).filter(*clauses).scalar()
 
     # Per-model token sums over the range, including cache-read/write subsets.
     rows = (
@@ -220,6 +221,7 @@ def overview(
         cache_hit_rate_pct=round(cache_hit_rate * 100.0, 2),
         api_equivalent_cost_usd=round(cost, 2),
         requests=requests,
+        average_tps=round(float(average_tps_value), 2) if average_tps_value is not None else None,
     )
 
 

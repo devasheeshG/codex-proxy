@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from math import ceil
@@ -600,6 +601,7 @@ def _record_usage_safe(
     request_id: Optional[str],
     fallback_provider_id: Optional[uuid.UUID] = None,
     codex_run_context: Optional[Mapping[str, str]] = None,
+    duration_ms: Optional[float] = None,
 ) -> None:
     try:
         with get_db_cm() as db:
@@ -616,6 +618,7 @@ def _record_usage_safe(
                 (codex_run_context or {}).get("codex_thread_id"),
                 (codex_run_context or {}).get("codex_turn_id"),
                 (codex_run_context or {}).get("codex_root_turn_id"),
+                duration_ms,
             )
     except Exception:  # noqa: BLE001
         logger.exception("Failed to record proxied token usage")
@@ -626,6 +629,13 @@ def _set_archive_metadata(request: Request, **fields: object) -> None:
     metadata = getattr(request.state, "archive_metadata", None)
     if isinstance(metadata, dict):
         metadata.update({key: value for key, value in fields.items() if value is not None})
+
+
+def _request_duration_ms(request: Request) -> Optional[float]:
+    started = getattr(request.state, "proxy_started_at", None)
+    if not isinstance(started, (int, float)):
+        return None
+    return round(max(0.0, (time.perf_counter() - started) * 1000.0), 3)
 
 
 def _extract_codex_run_context(body: object) -> dict[str, str]:
@@ -1192,6 +1202,7 @@ async def proxy_search(
 ) -> Response:
     """Relay Codex's standalone web-search JSON protocol through the account pool."""
     request.state.proxy_event_request_id = request_context.get_request_context().get("request_id") or f"req_{uuid.uuid4().hex}"
+    request.state.proxy_started_at = time.perf_counter()
     body = await request.body()
     try:
         parsed_request = json.loads(body)
@@ -1662,6 +1673,7 @@ async def proxy_responses(
     # returned to the client, but this local fallback keeps events correlated
     # in tests and deployments where archive middleware is disabled.
     request.state.proxy_event_request_id = request_context.get_request_context().get("request_id") or f"req_{uuid.uuid4().hex}"
+    request.state.proxy_started_at = time.perf_counter()
     client_prefix = f"{config.API_PREFIX}/v1"
     requested_path = request.url.path.removeprefix(client_prefix)
     is_chat_completion = requested_path == "/chat/completions"
@@ -2323,6 +2335,7 @@ async def proxy_responses(
             request_id,
             chosen_fallback_id,
             run_context,
+            _request_duration_ms(request),
         )
         _archive_usage(request, parsed_usage)
         if terminal_response is None:
@@ -2397,6 +2410,7 @@ async def proxy_responses(
                     request_id,
                     chosen_fallback_id,
                     run_context,
+                    _request_duration_ms(request),
                 )
                 _archive_usage(request, accumulator.result())
 
@@ -2448,6 +2462,7 @@ async def proxy_responses(
             request_id,
             chosen_fallback_id,
             run_context,
+            _request_duration_ms(request),
         )
         _archive_usage(request, parsed_usage)
         raw = _restore_requested_model_in_success_json(raw, response_status, requested_model)
@@ -2488,6 +2503,7 @@ async def proxy_responses(
                 request_id,
                 chosen_fallback_id,
                 run_context,
+                _request_duration_ms(request),
             )
             _archive_usage(request, captured_usage)
 

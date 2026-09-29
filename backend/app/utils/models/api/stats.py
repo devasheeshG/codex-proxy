@@ -53,6 +53,8 @@ class UsageRecord(BaseModel):
     output_tokens: int
     cached_input_tokens: int
     cache_write_tokens: int
+    duration_ms: Optional[float] = None
+    tokens_per_second: Optional[float] = None
     reasoning_level: Optional[str]
     request_mode: str
     cost_usd: float  # API-equivalent cost of this request (what it would cost on the pay-as-you-go API).
@@ -89,6 +91,8 @@ class UsageRecord(BaseModel):
             output_tokens=record_db.output_tokens,
             cached_input_tokens=record_db.cached_input_tokens,
             cache_write_tokens=record_db.cache_write_tokens,
+            duration_ms=getattr(record_db, "duration_ms", None),
+            tokens_per_second=getattr(record_db, "tokens_per_second", None),
             reasoning_level=record_db.reasoning_level,
             request_mode=record_db.request_mode,
             cost_usd=(float(record_db.billed_cost_usd) if record_db.billed_cost_usd is not None else pricing.cost_for_record(record_db)),
@@ -164,6 +168,7 @@ class OverviewResponse(BaseModel):
     # API-equivalent value of the range's usage (what it would cost on the pay-as-you-go API). ROI signal, not owed.
     api_equivalent_cost_usd: float
     requests: int
+    average_tps: Optional[float] = None
 
 
 # GET /stats/activity

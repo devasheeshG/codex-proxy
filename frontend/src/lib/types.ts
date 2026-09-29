@@ -60,6 +60,7 @@ export interface OverviewStats {
     // NOT money owed — subscriptions are flat-rate).
     api_equivalent_cost_usd: number;
     requests: number;
+    average_tps: number | null;
 }
 
 // Usage ----------------------------------------------------------------------
@@ -81,6 +82,8 @@ export interface UsageRecord {
     cached_input_tokens: number;
     // Included in input_tokens when the upstream response reports a cache write.
     cache_write_tokens: number;
+    duration_ms?: number | null;
+    tokens_per_second?: number | null;
     // Reasoning effort requested for this individual response.
     reasoning_level: string | null;
     request_mode: RequestMode;

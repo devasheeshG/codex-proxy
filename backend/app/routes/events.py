@@ -113,6 +113,8 @@ def list_events(
                 # billed_cost_usd; using the API response name here caused the
                 # events list endpoint to raise AttributeError and return 500.
                 "cost_usd": usage_row.billed_cost_usd,
+                "duration_ms": usage_row.duration_ms,
+                "tokens_per_second": usage_row.tokens_per_second,
                 "reasoning_level": usage_row.reasoning_level,
             }
         if row.account_id:

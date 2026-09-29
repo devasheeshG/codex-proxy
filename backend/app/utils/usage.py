@@ -254,6 +254,7 @@ def record_usage(
     codex_thread_id: Optional[str] = None,
     codex_turn_id: Optional[str] = None,
     codex_root_turn_id: Optional[str] = None,
+    duration_ms: Optional[float] = None,
 ) -> None:
     from app import pricing
 
@@ -289,6 +290,8 @@ def record_usage(
             codex_turn_id=codex_turn_id,
             codex_root_turn_id=codex_root_turn_id,
             billed_cost_usd=billed_cost,
+            duration_ms=duration_ms,
+            tokens_per_second=(usage.output_tokens / (duration_ms / 1000.0) if duration_ms and duration_ms > 0 and usage.output_tokens > 0 else None),
             created_at=now,
         )
     )

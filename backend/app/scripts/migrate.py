@@ -236,6 +236,10 @@ def sync_canonical_schema() -> None:
             )
         if "billed_cost_usd" not in usage_columns:
             connection.execute(text("ALTER TABLE usage_records ADD COLUMN billed_cost_usd DOUBLE PRECISION"))
+        if "duration_ms" not in usage_columns:
+            connection.execute(text("ALTER TABLE usage_records ADD COLUMN duration_ms DOUBLE PRECISION"))
+        if "tokens_per_second" not in usage_columns:
+            connection.execute(text("ALTER TABLE usage_records ADD COLUMN tokens_per_second DOUBLE PRECISION"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_usage_records_fallback_provider_id ON usage_records (fallback_provider_id)"))
 
         events_existed = inspect(connection).has_table("proxy_events")
@@ -270,6 +274,29 @@ def sync_canonical_schema() -> None:
         # data migration remains part of the canonical single-revision flow.
         connection.execute(text("UPDATE proxy_events SET event_type = 'account.response_received' WHERE event_type = 'account.selected'"))
         connection.execute(text("UPDATE proxy_events SET event_type = 'fallback.response_received' WHERE event_type = 'fallback.selected'"))
+        connection.execute(
+            text("""
+            WITH timings AS (
+                SELECT request_id,
+                       min(created_at) AS started_at
+                FROM proxy_events
+                WHERE request_id IS NOT NULL AND event_type = 'request.received'
+                GROUP BY request_id
+            )
+            UPDATE usage_records u
+            SET duration_ms = EXTRACT(EPOCH FROM (u.created_at - t.started_at)) * 1000.0,
+                tokens_per_second = CASE
+                    WHEN u.output_tokens > 0 AND u.created_at > t.started_at
+                    THEN u.output_tokens / EXTRACT(EPOCH FROM (u.created_at - t.started_at))
+                    ELSE NULL
+                END
+            FROM timings t
+            WHERE u.request_id = t.request_id
+              AND u.duration_ms IS NULL
+              AND t.started_at IS NOT NULL
+              AND u.created_at > t.started_at
+        """)
+        )
 
 
 def main() -> None:

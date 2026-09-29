@@ -462,6 +462,7 @@ export default function EventsPage() {
                                         "Event",
                                         "Input",
                                         "Output",
+                                        "TPS",
                                         "Cache read",
                                         "Cache write",
                                         "Cost",
@@ -494,7 +495,7 @@ export default function EventsPage() {
                                                     key={`group-${key}`}
                                                     className="bg-ink-850 border-ink-700 border-b"
                                                 >
-                                                    <td colSpan={13} className="px-3 py-2 text-xs">
+                                                    <td colSpan={14} className="px-3 py-2 text-xs">
                                                         <span className="text-fog-200 font-medium">
                                                             {groupByLabel(groupBy)}
                                                         </span>
@@ -591,6 +592,9 @@ export default function EventsPage() {
                                                     </td>
                                                     <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
                                                         {formatCompactNumber(m.output_tokens)}
+                                                    </td>
+                                                    <td className="text-fog-300 w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                        {m.tokens_per_second == null ? "—" : `${Number(m.tokens_per_second).toFixed(1)} t/s`}
                                                     </td>
                                                     <td className="w-32 min-w-32 px-3 py-3 font-mono text-xs">
                                                         <CacheReadMetric

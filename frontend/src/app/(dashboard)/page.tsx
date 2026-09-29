@@ -520,6 +520,14 @@ export default function OverviewPage() {
                                         Requests
                                     </div>
                                 </div>
+                                <div>
+                                    <div className="text-fog-100 font-mono text-lg tabular-nums">
+                                        {stats.average_tps == null ? "—" : `${formatNumber(stats.average_tps)} t/s`}
+                                    </div>
+                                    <div className="text-fog-400 mt-1 text-[10px] tracking-wider uppercase">
+                                        Average TPS
+                                    </div>
+                                </div>
                             </div>
                             <p className="border-brand-500/55 text-fog-400 mt-auto border-l-2 pt-4 pl-3 font-serif text-xs italic">
                                 Flat-rate subscriptions, measured at list API prices — value
@@ -954,11 +962,6 @@ function PeakHoursCard({
                         Requests by hour ({timezone}); five busiest users plus everyone else
                     </p>
                 </div>
-                {series.length > 0 ? (
-                    <span className="border-ink-700 text-fog-400 rounded-md border px-2 py-1 text-[10px] tracking-wide uppercase">
-                        {series.length} series
-                    </span>
-                ) : null}
             </div>
             <div className="mt-3">
                 {hourly ? (
@@ -1013,7 +1016,6 @@ function TopUsersCard({
                     <h3 className="text-fog-100 text-sm font-semibold">Top users</h3>
                     <p className="text-fog-400 mt-0.5 text-xs">Six highest token consumers</p>
                 </div>
-                <span className="text-fog-500 text-[10px] tracking-wide uppercase">In range</span>
             </div>
             <div className="mt-4">
                 {data.length > 0 ? (
@@ -1359,7 +1361,7 @@ function RequestsByModelCard({ data }: { data: ModelMixResponse }) {
     return (
         <Card className="p-5">
             <h3 className="text-fog-100 text-sm font-semibold">Requests by model</h3>
-            <p className="text-fog-400 mt-0.5 mb-4 text-xs">Total requests per model in range</p>
+            <p className="text-fog-400 mt-0.5 mb-4 text-xs">Request volume by model</p>
             <div className="space-y-2.5">
                 {sorted.map(([model, v]) => {
                     const pct = Math.round((v.requests / totalReq) * 100);
@@ -1470,9 +1472,6 @@ function DistributionCard({ distro }: { distro: DistributionResponse }) {
                 <div className="text-fog-400 text-xs font-medium tracking-wider uppercase">
                     Per-request token distribution
                 </div>
-                <span className="text-fog-400 font-mono text-xs">
-                    {formatNumber(distro.total_requests)} requests in range
-                </span>
             </div>
             <div className="mt-4 grid grid-cols-1 gap-6 lg:grid-cols-2">
                 <div>

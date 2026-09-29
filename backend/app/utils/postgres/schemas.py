@@ -348,6 +348,8 @@ class UsageRecordDb(DatabaseBase):
     codex_turn_id = Column(VARCHAR(128), nullable=True)
     codex_root_turn_id = Column(VARCHAR(128), nullable=True)
     billed_cost_usd = Column(Float, nullable=True)
+    duration_ms = Column(Float, nullable=True)
+    tokens_per_second = Column(Float, nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
