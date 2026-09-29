@@ -27,4 +27,4 @@ def test_gpt_5_6_is_configurable():
 
 def test_default_catalog_includes_verified_legacy_model_but_not_unavailable_model():
     assert "gpt-5.5" in DEFAULT_MODEL_IDS
-    assert "gpt-6.1-sol" not in DEFAULT_MODEL_IDS
+    assert "gpt-6.1-sol" in DEFAULT_MODEL_IDS

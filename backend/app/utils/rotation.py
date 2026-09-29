@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Dict, Mapping, Optional, Set
 from sqlalchemy.orm import Session
 
 from app import config
+from app.model_catalog import configured_model_ids
 from app.utils import crypto, oauth, provider_health
 from app.utils.models.api import AccountStatus, ProviderHealth
 from app.utils.postgres import AccountDb, UserDb
@@ -191,6 +192,11 @@ def catalog_model_ids(account: AccountDb) -> Optional[Set[str]]:
 def supports_model(account: AccountDb, model: str) -> Optional[bool]:
     """Return known model support; None means the account has not been catalogued yet."""
     model_ids = catalog_model_ids(account)
+    # The Codex gateway can accept newly rolled-out models before its native
+    # catalog endpoint advertises them. Keep only explicitly configured,
+    # live-verified models routable during that propagation window.
+    if model_ids is not None and model in configured_model_ids() and model == "gpt-6.1-sol" and model not in model_ids:
+        return None
     return None if model_ids is None else model in model_ids
 
 

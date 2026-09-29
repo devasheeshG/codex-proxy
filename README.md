@@ -118,6 +118,7 @@ Codex catalog is:
 | `gpt-6-astra` | Codex GPT 6 family |
 | `gpt-6-sol` | Codex GPT 6 family |
 | `gpt-6-luna` | Codex GPT 6 family |
+| `gpt-6.1-sol` | Codex GPT 6.1 Sol (live-verified; native catalogs may lag rollout) |
 | `codex-auto-review` | Codex browser auto-review model |
 
 The proxy's catalog is the set of supported IDs; individual users can still

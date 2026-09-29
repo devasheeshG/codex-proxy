@@ -235,6 +235,7 @@ def test_user_request_policy_can_be_customized(client, admin_headers):
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
+        "gpt-6.1-sol",
         "codex-auto-review",
     ]
 
@@ -322,6 +323,7 @@ def test_refresh_model_options_returns_fixed_catalog_without_upstream_calls(clie
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
+        "gpt-6.1-sol",
         "codex-auto-review",
     ]
     assert not upstream.called
@@ -1313,6 +1315,7 @@ def test_proxy_returns_fixed_codex_model_catalog(client, seed_account, make_user
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
+        "gpt-6.1-sol",
         "codex-auto-review",
     ]
     assert not route.called
@@ -1342,6 +1345,7 @@ def test_model_catalog_does_not_probe_pooled_accounts(client, seed_account, make
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
+        "gpt-6.1-sol",
         "codex-auto-review",
     }
     assert route.call_count == 0
@@ -1469,6 +1473,7 @@ def test_proxy_normalizes_fixed_model_catalog_for_openai_clients(client, seed_ac
             {"id": "gpt-6-astra", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-sol", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "gpt-6-luna", "object": "model", "created": 0, "owned_by": "openai"},
+            {"id": "gpt-6.1-sol", "object": "model", "created": 0, "owned_by": "openai"},
             {"id": "codex-auto-review", "object": "model", "created": 0, "owned_by": "openai"},
         ],
     }
