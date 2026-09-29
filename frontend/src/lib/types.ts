@@ -204,6 +204,7 @@ export interface ModelSlice {
     requests: number;
     input_tokens: number;
     output_tokens: number;
+    average_tps: number | null;
 }
 
 export interface UserModelMix {

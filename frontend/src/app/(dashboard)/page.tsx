@@ -520,14 +520,6 @@ export default function OverviewPage() {
                                         Requests
                                     </div>
                                 </div>
-                                <div>
-                                    <div className="text-fog-100 font-mono text-lg tabular-nums">
-                                        {stats.average_tps == null ? "—" : `${formatNumber(stats.average_tps)} t/s`}
-                                    </div>
-                                    <div className="text-fog-400 mt-1 text-[10px] tracking-wider uppercase">
-                                        Average TPS
-                                    </div>
-                                </div>
                             </div>
                             <p className="border-brand-500/55 text-fog-400 mt-auto border-l-2 pt-4 pl-3 font-serif text-xs italic">
                                 Flat-rate subscriptions, measured at list API prices — value
@@ -582,7 +574,10 @@ export default function OverviewPage() {
                             <div className="space-y-4">
                                 {modelMix &&
                                 modelMix.users.some((user) => user.total_requests > 0) ? (
-                                    <RequestsByModelCard data={modelMix} />
+                                    <>
+                                        <RequestsByModelCard data={modelMix} />
+                                        <AverageTpsByModelCard data={modelMix} />
+                                    </>
                                 ) : null}
                                 <PeakHoursCard
                                     hourly={hourly}
@@ -1073,7 +1068,6 @@ function UserInsightsCard({
         ),
     );
     const thinkingByUser = new Map((thinkingData?.users ?? []).map((user) => [user.user_id, user]));
-    const totalRequests = users.reduce((sum, user) => sum + user.total_requests, 0);
     const thinkingTotals = new Map<string, number>();
     for (const user of thinkingData?.users ?? []) {
         for (const level of user.thinking_levels) {
@@ -1093,8 +1087,7 @@ function UserInsightsCard({
                         Compare every active user without extending the page.
                     </p>
                     <div className="text-fog-500 mt-1 font-mono text-[11px]">
-                        {formatNumber(users.length)} active users · {formatNumber(totalRequests)}{" "}
-                        requests
+                        {formatNumber(users.length)} active users
                     </div>
                 </div>
                 <div
@@ -1391,6 +1384,62 @@ function RequestsByModelCard({ data }: { data: ModelMixResponse }) {
                     );
                 })}
             </div>
+        </Card>
+    );
+}
+
+function AverageTpsByModelCard({ data }: { data: ModelMixResponse }) {
+    const byModel: Record<string, { requests: number; measuredRequests: number; tps: number }> = {};
+    for (const user of data.users) {
+        for (const model of user.models) {
+            const entry = (byModel[model.model] ??= { requests: 0, measuredRequests: 0, tps: 0 });
+            entry.requests += model.requests;
+            if (model.average_tps != null && model.average_tps > 0) {
+                entry.measuredRequests += model.requests;
+                entry.tps += model.average_tps * model.requests;
+            }
+        }
+    }
+    const rows = Object.entries(byModel)
+        .map(([model, value]) => ({ model, requests: value.requests, tps: value.measuredRequests ? value.tps / value.measuredRequests : null }))
+        .filter((row) => row.tps != null)
+        .sort((a, b) => (b.tps ?? 0) - (a.tps ?? 0));
+    const maxTps = rows[0]?.tps ?? 1;
+    const allModels = Array.from(new Set(data.users.flatMap((user) => user.models.map((model) => model.model))));
+
+    return (
+        <Card className="p-5">
+            <h3 className="text-fog-100 text-sm font-semibold">Average TPS by model</h3>
+            <p className="text-fog-400 mt-0.5 mb-4 text-xs">Measured output tokens per second</p>
+            {rows.length === 0 ? (
+                <p className="text-fog-400 text-xs">No TPS measurements in this range.</p>
+            ) : (
+                <div className="space-y-2.5">
+                    {rows.map((row) => {
+                        const index = allModels.indexOf(row.model);
+                        return (
+                            <div key={row.model} className="flex items-center gap-2.5">
+                                <span className="text-fog-200 w-28 shrink-0 truncate font-mono text-xs">
+                                    {shortModel(row.model)}
+                                </span>
+                                <div className="bg-ink-800 h-5 flex-1 overflow-hidden rounded">
+                                    <div
+                                        className="h-full rounded"
+                                        style={{
+                                            width: `${Math.max(((row.tps ?? 0) / maxTps) * 100, 2)}%`,
+                                            backgroundColor: modelColor(index),
+                                            opacity: 0.85,
+                                        }}
+                                    />
+                                </div>
+                                <span className="text-fog-200 w-20 text-right font-mono text-xs tabular-nums">
+                                    {formatNumber(row.tps ?? 0)} t/s
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            )}
         </Card>
     );
 }

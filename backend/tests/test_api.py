@@ -2623,14 +2623,12 @@ def test_model_mix_uses_routed_model_instead_of_provider_response_label(
 
     response = client.get("/api/v1/stats/model-mix", headers=admin_headers)
     assert response.status_code == 200, response.text
-    assert response.json()["users"][0]["models"] == [
-        {
-            "model": "gpt-6-sol",
-            "requests": 1,
-            "input_tokens": 10,
-            "output_tokens": 2,
-        }
-    ]
+    model_row = response.json()["users"][0]["models"][0]
+    assert model_row["model"] == "gpt-6-sol"
+    assert model_row["requests"] == 1
+    assert model_row["input_tokens"] == 10
+    assert model_row["output_tokens"] == 2
+    assert model_row["average_tps"] > 0
 
 
 def test_overview_aggregates_active_pool_capacity(client, admin_headers, seed_account):

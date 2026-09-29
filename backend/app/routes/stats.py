@@ -432,6 +432,7 @@ def by_user(
         func.max(UsageRecordDb.created_at).label("last_used_at"),
         func.coalesce(func.sum(UsageRecordDb.input_tokens), 0).label("input_tokens"),
         func.coalesce(func.sum(UsageRecordDb.output_tokens), 0).label("output_tokens"),
+        func.avg(UsageRecordDb.tokens_per_second).label("average_tps"),
     ).outerjoin(UsageRecordDb, join_on)
     if rng.user_id is not None:
         query = query.filter(UserDb.id == rng.user_id)
@@ -521,6 +522,7 @@ def distributions(
 @router.get(
     "/model-mix",
     response_model=ModelMixResponse,
+    response_model_exclude_none=True,
     responses={
         200: {"description": "Per-user model breakdown retrieved successfully"},
         401: {"description": "Admin authentication required"},
@@ -544,6 +546,7 @@ def model_mix(
         func.count(UsageRecordDb.id).label("requests"),
         func.coalesce(func.sum(UsageRecordDb.input_tokens), 0).label("input_tokens"),
         func.coalesce(func.sum(UsageRecordDb.output_tokens), 0).label("output_tokens"),
+        func.avg(UsageRecordDb.tokens_per_second).label("average_tps"),
     ).outerjoin(UsageRecordDb, join_on)
     if rng.user_id is not None:
         query = query.filter(UserDb.id == rng.user_id)
@@ -568,6 +571,7 @@ def model_mix(
                     requests=reqs,
                     input_tokens=int(row.input_tokens or 0),
                     output_tokens=int(row.output_tokens or 0),
+                    average_tps=round(float(getattr(row, "average_tps", None)), 2) if getattr(row, "average_tps", None) is not None else None,
                 )
             )
 
