@@ -72,6 +72,28 @@ def test_presets_inherit_and_preserve_user_overrides(client, admin_headers):
     assert client.delete(f"/api/v1/presets/{preset_id}", headers=admin_headers).status_code == 409
 
 
+def test_context_window_policy_is_catalog_scoped_and_devasheesh_is_protected(client, admin_headers):
+    standard = client.post("/api/v1/users", headers=admin_headers, json={"name": "standard-context"}).json()["user"]
+    standard_key = client.post(f"/api/v1/users/{standard['id']}/keys", headers=admin_headers, json={"label": "standard"}).json()["secret"]
+    standard_catalog = client.get("/api/v1/models?client_version=0.159.0", headers={"Authorization": f"Bearer {standard_key}"}).json()
+    assert standard_catalog["models"][0]["context_window"] == 272000
+    assert standard_catalog["models"][0]["max_context_window"] == 272000
+
+    extended = client.post(
+        "/api/v1/users",
+        headers=admin_headers,
+        json={"name": "Devasheesh", "allow_extended_context": False},
+    ).json()["user"]
+    assert extended["allow_extended_context"] is True
+    extended_key = client.post(f"/api/v1/users/{extended['id']}/keys", headers=admin_headers, json={"label": "extended"}).json()["secret"]
+    extended_catalog = client.get("/api/v1/models?client_version=0.159.0", headers={"Authorization": f"Bearer {extended_key}"}).json()
+    assert extended_catalog["models"][0]["context_window"] == 1000000
+    assert extended_catalog["models"][0]["max_context_window"] == 1000000
+
+    updated = client.put(f"/api/v1/users/{extended['id']}", headers=admin_headers, json={"allow_extended_context": False}).json()["user"]
+    assert updated["allow_extended_context"] is True
+
+
 def test_user_policy_edit_is_atomic_with_preset_assignment(client, admin_headers):
     first = client.post("/api/v1/presets", headers=admin_headers, json={"name": "First", "allowed_request_modes": ["standard"]}).json()
     second = client.post("/api/v1/presets", headers=admin_headers, json={"name": "Second", "allowed_request_modes": ["fast"]}).json()

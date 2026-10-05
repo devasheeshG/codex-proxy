@@ -174,6 +174,8 @@ class UserDb(DatabaseBase):
     preset_overrides_json = Column(Text, nullable=False, default="[]", server_default="[]")
     model_reasoning_levels_json = Column(Text, nullable=False, default="{}", server_default="{}")
     model_request_modes_json = Column(Text, nullable=False, default="{}", server_default="{}")
+    # Opt-in to the one-million-token Codex context catalog advertised to this user.
+    allow_extended_context = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
 
@@ -197,6 +199,7 @@ class PresetDb(DatabaseBase):
     model_overrides_json = Column(Text, nullable=False, server_default="{}")
     model_reasoning_levels_json = Column(Text, nullable=False, server_default="{}")
     model_request_modes_json = Column(Text, nullable=False, server_default="{}")
+    allow_extended_context = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), nullable=False)
 
 

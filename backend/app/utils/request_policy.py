@@ -11,6 +11,9 @@ RequestMode = Literal["standard", "fast", "ultrafast"]
 ReasoningLevel = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 
 ALL_REQUEST_MODES: Tuple[RequestMode, ...] = ("standard", "fast", "ultrafast")
+DEFAULT_CONTEXT_WINDOW = 272_000
+EXTENDED_CONTEXT_WINDOW = 1_000_000
+EXTENDED_CONTEXT_AUTO_COMPACT_TOKEN_LIMIT = 900_000
 ALL_REASONING_LEVELS: Tuple[ReasoningLevel, ...] = (
     "none",
     "minimal",

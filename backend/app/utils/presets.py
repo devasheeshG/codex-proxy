@@ -9,6 +9,7 @@ POLICY_COLUMNS = {
     "model_overrides": "model_overrides_json",
     "model_reasoning_levels": "model_reasoning_levels_json",
     "model_request_modes": "model_request_modes_json",
+    "allow_extended_context": "allow_extended_context",
 }
 
 

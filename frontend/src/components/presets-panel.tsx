@@ -269,6 +269,7 @@ function PresetModal({
     const [modelModes, setModelModes] = useState<Record<string, RequestMode[]>>(
         preset?.model_request_modes ?? {},
     );
+    const [allowExtendedContext, setAllowExtendedContext] = useState(preset?.allow_extended_context ?? false);
     const [useGlobalThinking, setUseGlobalThinking] = useState(
         !preset || Object.keys(preset.model_reasoning_levels).length === 0,
     );
@@ -298,6 +299,7 @@ function PresetModal({
                           ]),
                       ),
                 model_request_modes: modelModes,
+                allow_extended_context: allowExtendedContext,
             };
             if (preset) await api.updatePreset(preset.id, payload);
             else await api.createPreset(payload);
@@ -315,6 +317,10 @@ function PresetModal({
             widthClass="max-w-3xl"
         >
             <form onSubmit={(event) => void save(event)} className="space-y-5">
+                <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm">
+                    <input type="checkbox" checked={allowExtendedContext} onChange={(event) => setAllowExtendedContext(event.target.checked)} className="accent-brand-500 mt-0.5 h-4 w-4 shrink-0" />
+                    <span><span className="block">Allow 1M context window</span><span className="text-fog-400 mt-0.5 block text-xs">Advertise a one-million-token Codex context window to users assigned this preset.</span></span>
+                </label>
                 <Field label="Preset name">
                     <TextInput
                         value={name}

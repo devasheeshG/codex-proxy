@@ -1184,7 +1184,10 @@ async def proxy_models(
     request.state.user_priority = user.priority
 
     _, client_supplied_version = _model_catalog_url(request)
-    catalog = _filter_model_catalog(codex_catalog(), request_policy.decode_models(user.allowed_models_json))
+    catalog = _filter_model_catalog(
+        codex_catalog(allow_extended_context=bool(user.allow_extended_context)),
+        request_policy.decode_models(user.allowed_models_json),
+    )
     response_body = catalog if client_supplied_version else _openai_model_catalog(catalog)
     return Response(
         content=json.dumps(response_body, separators=(",", ":")).encode(),

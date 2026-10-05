@@ -74,6 +74,7 @@ def sync_canonical_schema() -> None:
             "monthly_spend_budget_usd": "DOUBLE PRECISION",
             "lifetime_spend_budget_usd": "DOUBLE PRECISION",
             "model_overrides_json": "TEXT NOT NULL DEFAULT '{}'",
+            "allow_extended_context": "BOOLEAN NOT NULL DEFAULT FALSE",
         }
         for column_name, column_type in user_policy_columns.items():
             if column_name not in user_columns:
@@ -118,6 +119,9 @@ def sync_canonical_schema() -> None:
             )
         connection.execute(text('ALTER TABLE users ALTER COLUMN allowed_request_modes_json SET DEFAULT \'["standard","fast","ultrafast"]\''))
         PresetDb.__table__.create(connection, checkfirst=True)
+        preset_columns_existing = {column["name"] for column in inspect(connection).get_columns("presets")}
+        if "allow_extended_context" not in preset_columns_existing:
+            connection.execute(text("ALTER TABLE presets ADD COLUMN allow_extended_context BOOLEAN NOT NULL DEFAULT FALSE"))
         preset_fields = (
             "allowed_models_json",
             "allowed_reasoning_levels_json",
@@ -125,6 +129,7 @@ def sync_canonical_schema() -> None:
             "model_overrides_json",
             "model_reasoning_levels_json",
             "model_request_modes_json",
+            "allow_extended_context",
         )
         existing_preset = connection.execute(text("SELECT id FROM presets ORDER BY created_at LIMIT 1")).scalar()
         if existing_preset is None:
@@ -138,6 +143,7 @@ def sync_canonical_schema() -> None:
                 ),
                 "model_reasoning_levels_json": "{}",
                 "model_request_modes_json": "{}",
+                "allow_extended_context": False,
             }
             baseline = {
                 field: Counter(row[field] for row in existing_users).most_common(1)[0][0] if existing_users else default
@@ -164,6 +170,11 @@ def sync_canonical_schema() -> None:
                     text("UPDATE users SET preset_id = :preset_id, preset_overrides_json = :overrides WHERE id = :id"),
                     {"preset_id": existing_preset, "overrides": json.dumps(overrides), "id": row["id"]},
                 )
+        # Devasheesh already relies on the extended Codex context. Preserve that
+        # access explicitly while making the new policy opt-in for everyone else.
+        connection.execute(
+            text("UPDATE users SET allow_extended_context = TRUE WHERE lower(trim(name)) = 'devasheesh'")
+        )
 
         # Existing installations are already stamped at the squashed 001 head,
         # so additive fields introduced after the squash must be reconciled

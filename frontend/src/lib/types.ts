@@ -417,6 +417,7 @@ export interface Preset {
     model_overrides: Record<string, string>;
     model_reasoning_levels: Record<string, ReasoningLevel[]>;
     model_request_modes: Record<string, RequestMode[]>;
+    allow_extended_context: boolean;
 }
 
 export interface User {
@@ -446,6 +447,7 @@ export interface User {
     preset_overrides: string[];
     model_reasoning_levels: Record<string, ReasoningLevel[]>;
     model_request_modes: Record<string, RequestMode[]>;
+    allow_extended_context: boolean;
     last_used_at: string | null;
     created_at: string;
     total_tokens: number;

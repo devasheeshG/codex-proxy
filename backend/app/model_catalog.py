@@ -9,6 +9,7 @@ The default lineup is kept here for backwards-compatible deployments, while
 from collections.abc import Iterable
 
 from app.config import get_settings
+from app.utils import request_policy
 
 DEFAULT_MODEL_IDS: tuple[str, ...] = (
     "gpt-5.5",
@@ -33,7 +34,23 @@ def configured_model_ids(raw: str | None = None) -> tuple[str, ...]:
     return models or DEFAULT_MODEL_IDS
 
 
-def codex_catalog(model_ids: Iterable[str] | None = None) -> dict[str, list[dict[str, str]]]:
-    """Return a fresh Codex-shaped catalog so callers can safely filter it."""
+def codex_catalog(
+    model_ids: Iterable[str] | None = None,
+    *,
+    allow_extended_context: bool = False,
+) -> dict[str, list[dict[str, object]]]:
+    """Return a per-user Codex catalog with an explicit context ceiling."""
     ids = configured_model_ids() if model_ids is None else tuple(model_ids)
-    return {"models": [{"slug": model_id} for model_id in ids]}
+    context_window = request_policy.EXTENDED_CONTEXT_WINDOW if allow_extended_context else request_policy.DEFAULT_CONTEXT_WINDOW
+    models = []
+    for model_id in ids:
+        model = {
+            "slug": model_id,
+            "context_window": context_window,
+            "max_context_window": context_window,
+            "effective_context_window_percent": 95,
+        }
+        if allow_extended_context:
+            model["auto_compact_token_limit"] = request_policy.EXTENDED_CONTEXT_AUTO_COMPACT_TOKEN_LIMIT
+        models.append(model)
+    return {"models": models}

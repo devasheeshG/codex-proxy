@@ -12,6 +12,7 @@ def test_sync_canonical_schema_adds_post_squash_columns_to_existing_tables():
         "monthly_spend_budget_usd",
         "lifetime_spend_budget_usd",
         "model_overrides_json",
+        "allow_extended_context",
     }
     quota_columns = {
         "five_hour_used_pct",
@@ -52,6 +53,7 @@ def test_sync_canonical_schema_adds_post_squash_columns_to_existing_tables():
     usage_columns = {column["name"] for column in inspect(engine).get_columns("usage_records")}
     assert "allowed_models_json" in user_columns
     assert user_policy_columns <= user_columns
+    assert "allow_extended_context" in user_columns
     assert quota_columns <= account_columns
     assert "authenticated_override" in account_columns
     assert inspect(engine).has_table("openai_fallbacks")

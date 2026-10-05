@@ -557,6 +557,7 @@ export const api = {
             preset_id?: string | null;
             model_reasoning_levels?: Record<string, ReasoningLevel[]>;
             model_request_modes?: Record<string, RequestMode[]>;
+            allow_extended_context?: boolean;
         } = {},
     ): Promise<User> {
         const res = await request<{ user: User }>("/v1/users", {
@@ -579,6 +580,7 @@ export const api = {
                 preset_id: opts.preset_id,
                 model_reasoning_levels: opts.model_reasoning_levels,
                 model_request_modes: opts.model_request_modes,
+                allow_extended_context: opts.allow_extended_context,
             },
         });
         return res.user;
@@ -605,6 +607,7 @@ export const api = {
             model_overrides?: Record<string, string>;
             model_reasoning_levels?: Record<string, ReasoningLevel[]>;
             model_request_modes?: Record<string, RequestMode[]>;
+            allow_extended_context?: boolean;
         },
     ): Promise<User> {
         const res = await request<{ user: User }>(`/v1/users/${id}`, {

