@@ -172,9 +172,21 @@ def sync_canonical_schema() -> None:
                 )
         # Devasheesh already relies on the extended Codex context. Preserve that
         # access explicitly while making the new policy opt-in for everyone else.
-        connection.execute(
-            text("UPDATE users SET allow_extended_context = TRUE WHERE lower(trim(name)) = 'devasheesh'")
-        )
+        connection.execute(text("UPDATE users SET allow_extended_context = TRUE WHERE lower(trim(name)) = 'devasheesh'"))
+
+        # Repair the protected user's existing override marker without
+        # changing other policy choices. Repeat migrations are idempotent.
+        for row in (
+            connection.execute(text("SELECT id, preset_overrides_json FROM users WHERE lower(trim(name)) = 'devasheesh' AND preset_id IS NOT NULL"))
+            .mappings()
+            .all()
+        ):
+            overrides = set(json.loads(row["preset_overrides_json"] or "[]"))
+            overrides.add("allow_extended_context")
+            connection.execute(
+                text("UPDATE users SET preset_overrides_json = :overrides WHERE id = :id"),
+                {"overrides": json.dumps(sorted(overrides)), "id": row["id"]},
+            )
 
         # Existing installations are already stamped at the squashed 001 head,
         # so additive fields introduced after the squash must be reconciled

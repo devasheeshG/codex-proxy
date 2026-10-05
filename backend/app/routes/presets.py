@@ -124,7 +124,7 @@ def update_preset(preset_id: uuid.UUID, payload: PresetPayload, _: str = Depends
         presets.apply_preset(user, row)
         if user.name.strip().lower() == "devasheesh":
             user.allow_extended_context = True
-            presets.set_overridden_fields(user, presets.overridden_fields(user) - {"allow_extended_context"})
+            presets.set_overridden_fields(user, (presets.overridden_fields(user) | {"allow_extended_context"}) if user.preset_id else set())
     db.commit()
     return _data(row)
 
