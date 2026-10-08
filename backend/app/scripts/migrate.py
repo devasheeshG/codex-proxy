@@ -120,9 +120,13 @@ def sync_canonical_schema() -> None:
         connection.execute(text('ALTER TABLE users ALTER COLUMN allowed_request_modes_json SET DEFAULT \'["standard","fast","ultrafast"]\''))
         PresetDb.__table__.create(connection, checkfirst=True)
         preset_columns_existing = {column["name"] for column in inspect(connection).get_columns("presets")}
+        needs_fallback_policy_backfill = "fallback_enabled" not in preset_columns_existing
+        if needs_fallback_policy_backfill:
+            connection.execute(text("ALTER TABLE presets ADD COLUMN fallback_enabled BOOLEAN NOT NULL DEFAULT FALSE"))
         if "allow_extended_context" not in preset_columns_existing:
             connection.execute(text("ALTER TABLE presets ADD COLUMN allow_extended_context BOOLEAN NOT NULL DEFAULT FALSE"))
         preset_fields = (
+            "fallback_enabled",
             "allowed_models_json",
             "allowed_reasoning_levels_json",
             "allowed_request_modes_json",
@@ -135,6 +139,7 @@ def sync_canonical_schema() -> None:
         if existing_preset is None:
             existing_users = connection.execute(text(f"SELECT id, {', '.join(preset_fields)} FROM users")).mappings().all()
             defaults = {
+                "fallback_enabled": False,
                 "allowed_models_json": None,
                 "allowed_reasoning_levels_json": '["none","minimal","low","medium","high","xhigh","max"]',
                 "allowed_request_modes_json": '["standard","fast","ultrafast"]',
@@ -170,6 +175,26 @@ def sync_canonical_schema() -> None:
                     text("UPDATE users SET preset_id = :preset_id, preset_overrides_json = :overrides WHERE id = :id"),
                     {"preset_id": existing_preset, "overrides": json.dumps(overrides), "id": row["id"]},
                 )
+        # Preserve existing per-user fallback access when presets gain this
+        # field; never silently opt existing users into paid API fallbacks.
+        if needs_fallback_policy_backfill:
+            for row in (
+                connection.execute(
+                    text(
+                        "SELECT u.id, u.preset_overrides_json FROM users u JOIN presets p ON p.id = u.preset_id "
+                        "WHERE u.fallback_enabled IS DISTINCT FROM p.fallback_enabled"
+                    )
+                )
+                .mappings()
+                .all()
+            ):
+                overrides = set(json.loads(row["preset_overrides_json"] or "[]"))
+                overrides.add("fallback_enabled")
+                connection.execute(
+                    text("UPDATE users SET preset_overrides_json = :overrides WHERE id = :id"),
+                    {"overrides": json.dumps(sorted(overrides)), "id": row["id"]},
+                )
+
         # Devasheesh already relies on the extended Codex context. Preserve that
         # access explicitly while making the new policy opt-in for everyone else.
         connection.execute(text("UPDATE users SET allow_extended_context = TRUE WHERE lower(trim(name)) = 'devasheesh'"))

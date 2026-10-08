@@ -193,6 +193,7 @@ class PresetDb(DatabaseBase):
 
     id = Column(UUID(as_uuid=True), primary_key=True)
     name = Column(VARCHAR(120), nullable=False, unique=True)
+    fallback_enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     allowed_models_json = Column(Text, nullable=True)
     allowed_reasoning_levels_json = Column(Text, nullable=False, server_default=request_policy.DEFAULT_REASONING_LEVELS_JSON)
     allowed_request_modes_json = Column(Text, nullable=False, server_default=request_policy.DEFAULT_REQUEST_MODES_JSON)

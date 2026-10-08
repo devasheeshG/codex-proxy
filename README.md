@@ -448,3 +448,5 @@ mapping and the approved company egress list.
 ### Context-window policy
 
 Each preset and user policy has an **Allow 1M context window** option. When it is off, the proxy advertises the standard 272,000-token Codex context and ceiling. When it is on, the authenticated user's model catalog advertises a 1,000,000-token context and ceiling with a 900,000-token automatic-compaction limit. Existing user `Devasheesh` is explicitly migrated with the option enabled; new users and everyone else default to the standard window.
+
+Presets include **Allow API fallback providers**. Users inherit this setting unless they select a per-user fallback override. Clearing the override restores preset inheritance. The migration preserves existing user fallback permissions.

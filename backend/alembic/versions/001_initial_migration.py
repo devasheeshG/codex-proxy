@@ -106,6 +106,7 @@ def upgrade() -> None:
         "presets",
         sa.Column("id", sa.UUID(), nullable=False),
         sa.Column("name", sa.VARCHAR(length=120), nullable=False),
+        sa.Column("fallback_enabled", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("allowed_models_json", sa.Text(), nullable=True),
         sa.Column(
             "allowed_reasoning_levels_json",

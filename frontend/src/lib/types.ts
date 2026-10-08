@@ -408,6 +408,7 @@ export type RequestMode = "standard" | "fast" | "ultrafast";
 export type ReasoningLevel = "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface Preset {
+    fallback_enabled: boolean;
     id: string;
     name: string;
     user_count: number;

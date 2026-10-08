@@ -29,6 +29,7 @@ def _matrix(value, allowed):
 
 
 class PresetPayload(BaseModel):
+    fallback_enabled: bool = False
     name: str = Field(min_length=1, max_length=120)
     allowed_models: list[str] | None = Field(default=None, min_length=1)
     allowed_reasoning_levels: list[request_policy.ReasoningLevel] = Field(
@@ -72,6 +73,7 @@ def _data(preset):
     return {
         "id": preset.id,
         "name": preset.name,
+        "fallback_enabled": bool(preset.fallback_enabled),
         "allowed_models": request_policy.decode_models(preset.allowed_models_json),
         "allowed_reasoning_levels": request_policy.decode_choices(preset.allowed_reasoning_levels_json, request_policy.ALL_REASONING_LEVELS),
         "allowed_request_modes": request_policy.decode_choices(preset.allowed_request_modes_json, request_policy.ALL_REQUEST_MODES),
@@ -84,6 +86,7 @@ def _data(preset):
 
 def _write(preset, payload):
     preset.name = payload.name.strip()
+    preset.fallback_enabled = payload.fallback_enabled
     preset.allowed_models_json = request_policy.encode_models(payload.allowed_models) if payload.allowed_models is not None else None
     preset.allowed_reasoning_levels_json = request_policy.encode_choices(payload.allowed_reasoning_levels, request_policy.ALL_REASONING_LEVELS)
     preset.allowed_request_modes_json = request_policy.encode_choices(payload.allowed_request_modes, request_policy.ALL_REQUEST_MODES)

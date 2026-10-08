@@ -186,6 +186,7 @@ const REASONING_LEVELS: ReasoningLevel[] = [
 ];
 
 const PRESET_OVERRIDE_LABELS: Record<string, string> = {
+    fallback_enabled: "API fallback overridden",
     allowed_models: "Models overridden",
     allowed_request_modes: "Request modes overridden",
     allowed_reasoning_levels: "Thinking levels overridden",
@@ -253,6 +254,8 @@ function ChoiceGroup<T extends string>({
 
 function UserPolicyFields({
     modelOptions,
+    fallbackEnabled,
+    onFallbackEnabled,
     visible,
     allowedModels,
     onAllowedModels,
@@ -270,6 +273,8 @@ function UserPolicyFields({
     onAllowExtendedContext,
 }: {
     modelOptions: string[];
+    fallbackEnabled: boolean;
+    onFallbackEnabled: (value: boolean) => void;
     visible?: string[];
     allowedModels: string[] | null;
     onAllowedModels: (value: string[] | null) => void;
@@ -289,10 +294,32 @@ function UserPolicyFields({
     const show = (field: string) => !visible || visible.includes(field);
     return (
         <div className="space-y-5">
+            {show("fallback_enabled") && (
+                <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-sm">
+                    <input
+                        type="checkbox"
+                        checked={fallbackEnabled}
+                        onChange={(event) => onFallbackEnabled(event.target.checked)}
+                        className="accent-brand-500 h-4 w-4 shrink-0"
+                    />
+                    Allow API fallback providers
+                </label>
+            )}
             {show("allow_extended_context") && (
                 <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-start gap-2.5 rounded-md border px-3 py-2.5 text-sm">
-                    <input type="checkbox" checked={allowExtendedContext} onChange={(e) => onAllowExtendedContext(e.target.checked)} className="accent-brand-500 mt-0.5 h-4 w-4 shrink-0" />
-                    <span><span className="block">Allow 1M context window</span><span className="text-fog-400 mt-0.5 block text-xs">Use the 1,000,000-token Codex window for this policy. Off uses the standard 272k window.</span></span>
+                    <input
+                        type="checkbox"
+                        checked={allowExtendedContext}
+                        onChange={(e) => onAllowExtendedContext(e.target.checked)}
+                        className="accent-brand-500 mt-0.5 h-4 w-4 shrink-0"
+                    />
+                    <span>
+                        <span className="block">Allow 1M context window</span>
+                        <span className="text-fog-400 mt-0.5 block text-xs">
+                            Use the 1,000,000-token Codex window for this policy. Off uses the
+                            standard 272k window.
+                        </span>
+                    </span>
                 </label>
             )}
             {show("allowed_models") && (
@@ -1317,7 +1344,7 @@ function CreateUserModal({
 }) {
     const [name, setName] = useState("");
     const [priority, setPriority] = useState("1");
-    const [fallbackEnabled, setFallbackEnabled] = useState(false);
+    const [fallbackEnabled, setFallbackEnabled] = useState(presets[0]?.fallback_enabled ?? false);
     const [rate, setRate] = useState("");
     const [hourlyRate, setHourlyRate] = useState("");
     const [dailyRate, setDailyRate] = useState("");
@@ -1344,7 +1371,9 @@ function CreateUserModal({
     const [modelModes, setModelModes] = useState<Record<string, RequestMode[]>>(
         presets[0]?.model_request_modes ?? {},
     );
-    const [allowExtendedContext, setAllowExtendedContext] = useState(presets[0]?.allow_extended_context ?? false);
+    const [allowExtendedContext, setAllowExtendedContext] = useState(
+        presets[0]?.allow_extended_context ?? false,
+    );
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -1355,7 +1384,6 @@ function CreateUserModal({
         try {
             const user = await api.createUser(name.trim(), {
                 priority: Number(priority) || 1,
-                fallback_enabled: fallbackEnabled,
                 rate_limit_per_minute: parseLimitInput(rate),
                 rate_limit_per_hour: parseLimitInput(hourlyRate),
                 rate_limit_per_day: parseLimitInput(dailyRate),
@@ -1366,6 +1394,7 @@ function CreateUserModal({
                 preset_id: presetId || null,
                 ...(!presetId
                     ? {
+                          fallback_enabled: fallbackEnabled,
                           allowed_models: allowedModels,
                           model_overrides: modelOverrides,
                           allowed_request_modes: requestModes,
@@ -1409,15 +1438,6 @@ function CreateUserModal({
                             onChange={(e) => setPriority(e.target.value)}
                         />
                     </Field>
-                    <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={fallbackEnabled}
-                            onChange={(e) => setFallbackEnabled(e.target.checked)}
-                            className="accent-brand-500 h-4 w-4 shrink-0"
-                        />
-                        Allow API fallback providers
-                    </label>
                 </div>
 
                 <Field label="Policy preset">
@@ -1428,6 +1448,7 @@ function CreateUserModal({
                             setPresetId(value);
                             const preset = presets.find((item) => item.id === value);
                             if (preset) {
+                                setFallbackEnabled(preset.fallback_enabled);
                                 setAllowedModels(preset.allowed_models);
                                 setModelOverrides(preset.model_overrides);
                                 setRequestModes(preset.allowed_request_modes);
@@ -1446,6 +1467,8 @@ function CreateUserModal({
 
                 {!presetId && (
                     <UserPolicyFields
+                        fallbackEnabled={fallbackEnabled}
+                        onFallbackEnabled={setFallbackEnabled}
                         modelOptions={modelOptions}
                         allowedModels={allowedModels}
                         onAllowedModels={setAllowedModels}
@@ -1575,7 +1598,7 @@ function EditUserModal({
     const [name, setName] = useState(user.name);
     const [active, setActive] = useState(user.active);
     const [priority, setPriority] = useState(String(user.priority ?? 1));
-    const [fallbackEnabled, setFallbackEnabled] = useState(user.fallback_enabled ?? true);
+    const [fallbackEnabled, setFallbackEnabled] = useState(user.fallback_enabled ?? false);
     const [rate, setRate] = useState(
         user.rate_limit_per_minute ? String(user.rate_limit_per_minute) : "",
     );
@@ -1644,7 +1667,6 @@ function EditUserModal({
                 name: name.trim(),
                 active,
                 priority: Number(priority) || 1,
-                fallback_enabled: fallbackEnabled,
                 rate_limit_per_minute: parseLimitInput(rate) ?? 0,
                 rate_limit_per_hour: parseLimitInput(hourlyRate) ?? 0,
                 rate_limit_per_day: parseLimitInput(dailyRate) ?? 0,
@@ -1657,6 +1679,9 @@ function EditUserModal({
                     : {}),
                 ...(shouldUseOverride("allowed_reasoning_levels")
                     ? { allowed_reasoning_levels: reasoningLevels }
+                    : {}),
+                ...(shouldUseOverride("fallback_enabled")
+                    ? { fallback_enabled: fallbackEnabled }
                     : {}),
                 ...(shouldUseOverride("allowed_models") ? { allowed_models: allowedModels } : {}),
                 ...(shouldUseOverride("model_overrides")
@@ -1699,15 +1724,6 @@ function EditUserModal({
                             onChange={(e) => setPriority(e.target.value)}
                         />
                     </Field>
-                    <label className="border-ink-700 bg-ink-900/50 text-fog-200 flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-sm">
-                        <input
-                            type="checkbox"
-                            checked={fallbackEnabled}
-                            onChange={(e) => setFallbackEnabled(e.target.checked)}
-                            className="accent-brand-500 h-4 w-4 shrink-0"
-                        />
-                        Allow API fallback providers
-                    </label>
                 </div>
 
                 <UserRateLimitFields
@@ -1785,6 +1801,7 @@ function EditUserModal({
                             setSelectedPresetId(value);
                             setOverrideFields([]);
                             if (preset) {
+                                setFallbackEnabled(preset.fallback_enabled);
                                 setAllowedModels(preset.allowed_models);
                                 setModelOverrides(preset.model_overrides);
                                 setRequestModes(preset.allowed_request_modes);
@@ -1809,6 +1826,7 @@ function EditUserModal({
                         <div className="text-fog-200 text-sm font-medium">User overrides</div>
                         {(
                             [
+                                ["fallback_enabled", "API fallback providers"],
                                 ["allowed_models", "Allowed models"],
                                 ["allowed_request_modes", "Request modes"],
                                 ["allowed_reasoning_levels", "Thinking levels"],
@@ -1836,6 +1854,8 @@ function EditUserModal({
 
                 {(!selectedPresetId || overrideFields.length > 0) && (
                     <UserPolicyFields
+                        fallbackEnabled={fallbackEnabled}
+                        onFallbackEnabled={setFallbackEnabled}
                         modelOptions={modelOptions}
                         visible={selectedPresetId ? overrideFields : undefined}
                         allowedModels={allowedModels}
