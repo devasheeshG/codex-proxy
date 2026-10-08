@@ -516,11 +516,15 @@ def auto_redeem_weekly_reset(
     # was sent but before we acquired the lock. Verify the provider's current
     # window while holding the lock so a stale 100% response cannot spend the
     # next credit too.
-    apply_usage_probe(
-        locked,
-        oauth.fetch_usage(access_token, locked.chatgpt_account_id, **_provider_call_kwargs(egress_target)),
-    )
+    verified_usage = oauth.fetch_usage(access_token, locked.chatgpt_account_id, **_provider_call_kwargs(egress_target))
+    apply_usage_probe(locked, verified_usage)
     if locked.weekly_used_pct is None or locked.weekly_used_pct < 1.0:
+        # A natural/manual reset may have happened since the cached failure.
+        # Confirmed usable quota restores capacity without consuming a credit.
+        if verified_usage.get("limit_reached") is False:
+            if all(window.used_pct is None or window.used_pct < window.threshold for window in quota_windows(locked)):
+                locked.cooldown_until = None
+                locked.status = AccountStatus.ACTIVE
         db.commit()
         return False
 
@@ -573,12 +577,22 @@ def auto_redeem_weekly_reset(
     return result["code"] in {"reset", "already_redeemed"}
 
 
+def available_pool_account(db: Session, *, model: Optional[str] = None) -> Optional[AccountDb]:
+    """Re-read capacity so a concurrent refresh can prevent credit consumption."""
+    # Runtime sessions disable autoflush. Persist new quota headers before
+    # refreshing ORM objects, otherwise the read would discard observations.
+    db.flush()
+    candidates = [
+        account
+        for account in db.query(AccountDb).populate_existing().all()
+        if account.chatgpt_account_id and is_available(account) and (not model or supports_model(account, model) is not False)
+    ]
+    return min(candidates, key=account_selection_key) if candidates else None
+
+
 def pool_has_capacity(db: Session, *, model: Optional[str] = None) -> bool:
     """Busy accounts still count as capacity; contention must not spend credits."""
-    return any(
-        account.chatgpt_account_id and is_available(account) and (not model or supports_model(account, model) is not False)
-        for account in db.query(AccountDb).all()
-    )
+    return available_pool_account(db, model=model) is not None
 
 
 def weekly_reset_recovery_candidates(db: Session, *, model: Optional[str] = None) -> list[AccountDb]:
@@ -624,10 +638,11 @@ def recover_exhausted_pool(db: Session, *, model: Optional[str] = None) -> Optio
             target = egress.get_pool().resolve(account.egress_target_id)
             token = ensure_fresh_token(db, account, egress_target=target)
             redeemed = auto_redeem_weekly_reset(db, account, token, egress_target=target, model=model)
-            if pool_has_capacity(db, model=model):
+            available = available_pool_account(db, model=model)
+            if available is not None:
                 if redeemed:
                     get_logger().info("Automatically redeemed a weekly reset for exhausted pool account %s", account_id)
-                return account_id
+                return available.id
             if redeemed:
                 get_logger().info("Automatically redeemed a weekly reset for exhausted pool account %s", account_id)
                 return None

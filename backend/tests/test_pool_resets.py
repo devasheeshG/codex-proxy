@@ -205,3 +205,47 @@ def test_last_serving_account_exhaustion_recovers_farthest_other_account(client,
     with SessionFactory() as db:
         assert db.get(AccountDb, near).weekly_used_pct == 1.0
         assert db.get(AccountDb, far).weekly_used_pct == 0.0
+
+
+def test_capacity_restored_during_provider_check_prevents_claim(seed_account, monkeypatch):
+    far = exhausted(seed_account, "far", 6)
+    other = exhausted(seed_account, "other", 1)
+    claims = provider(monkeypatch)
+    original = rotation.oauth.list_reset_credits
+
+    def credits(*args, **kwargs):
+        # A separate quota worker commits a newly usable account while the
+        # reset worker still has the earlier exhausted ORM object cached.
+        with SessionFactory() as db:
+            db.get(AccountDb, other).weekly_used_pct = 0.2
+            db.commit()
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(rotation.oauth, "list_reset_credits", credits)
+    with SessionFactory() as db:
+        assert rotation.recover_exhausted_pool(db) == other
+        assert db.get(AccountDb, far).weekly_used_pct == 1.0
+    assert claims == []
+
+
+def test_provider_recovered_window_clears_old_quota_cooldown_without_claim(seed_account, monkeypatch):
+    account_id = exhausted(seed_account, "recovered", 6)
+    with SessionFactory() as db:
+        account = db.get(AccountDb, account_id)
+        account.status = AccountStatus.COOLDOWN
+        account.cooldown_until = account.weekly_reset_at
+        db.commit()
+    claims = provider(monkeypatch)
+    monkeypatch.setattr(
+        rotation.oauth,
+        "fetch_usage",
+        lambda *_a, **_k: {
+            "five_hour": {"utilization": 0.0},
+            "weekly": {"utilization": 0.0},
+            "limit_reached": False,
+        },
+    )
+    with SessionFactory() as db:
+        assert rotation.recover_exhausted_pool(db) == account_id
+        assert rotation.is_available(db.get(AccountDb, account_id))
+    assert claims == []
