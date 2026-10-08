@@ -173,7 +173,16 @@ other card setting.
 
 Automatic weekly limit-reset redemption is an opt-in account setting. It is
 disabled by default, including for accounts created before this setting was
-introduced; administrators can enable it in each account's Edit dialog.
+introduced; administrators can enable it in each account's Edit dialog. It is a
+last resort: another available account that can serve the requested model
+always prevents automatic redemption. Once the pool is exhausted, choose an
+opted-in, recoverable account with the latest natural weekly reset date;
+unknown reset dates sort last, and priority only breaks equal-date ties.
+Within that account, redeem the earliest-expiring valid credit. Recovery stops
+once capacity returns. A pool-wide database lock prevents concurrent workers
+from spending several credits. The background refresher updates every account
+before deciding to claim. Manual administrator redemption keeps its existing
+usage/expiry safeguards.
 
 ### Users
 

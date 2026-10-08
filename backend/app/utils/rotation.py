@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Dict, Mapping, Optional, Set
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import config
@@ -474,18 +475,30 @@ def auto_redeem_weekly_reset(
     access_token: str,
     *,
     egress_target: "EgressTarget | None" = None,
+    model: Optional[str] = None,
 ) -> bool:
-    """Redeem the earliest-expiring available credit once a weekly window is full."""
+    """Spend a reset only for the farthest-reset candidate in an exhausted pool."""
     if not account.auto_limit_reset_enabled:
         return False
     if account.weekly_used_pct is None or account.weekly_used_pct < 1.0 or not account.chatgpt_account_id:
         return False
 
-    # Serialize redemptions per account. The deterministic request id also makes
-    # a retry safe if the provider completed a request before the connection died.
-    # Persist quota changes learned from the response/probe before refreshing
-    # this identity-map entry under a row lock.
-    db.flush()
+    # Persist observations before acquiring the pool lock; acquiring it while
+    # holding a different account row lock could deadlock concurrent workers.
+    db.commit()
+    # Another worker can restore capacity while this request uses the normal
+    # bounded pool wait; do not block every ASGI worker behind a provider call.
+    if not db.execute(text("SELECT pg_try_advisory_xact_lock(837293757)")).scalar():
+        db.commit()
+        return False
+    db.expire_all()
+    if pool_has_capacity(db, model=model):
+        db.commit()
+        return False
+    recovery = weekly_reset_recovery_candidates(db, model=model)
+    if not recovery or recovery[0].id != account.id:
+        db.commit()
+        return False
 
     # ``account`` is commonly already present in this session's identity map.
     # Refresh it while acquiring the lock so a worker that waited for another
@@ -493,8 +506,10 @@ def auto_redeem_weekly_reset(
     # second credit from stale ORM state.
     locked = db.query(AccountDb).filter(AccountDb.id == account.id).populate_existing().with_for_update().one()
     if not locked.auto_limit_reset_enabled:
+        db.commit()
         return False
     if locked.weekly_used_pct is None or locked.weekly_used_pct < 1.0 or not locked.chatgpt_account_id:
+        db.commit()
         return False
 
     # Another worker may have redeemed this window after our upstream request
@@ -530,6 +545,10 @@ def auto_redeem_weekly_reset(
         db.commit()
         return False
 
+    recovery = weekly_reset_recovery_candidates(db, model=model)
+    if pool_has_capacity(db, model=model) or not recovery or recovery[0].id != locked.id:
+        db.commit()
+        return False
     _, _, credit_id = min(candidates)
     redeem_request_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"codex-proxy:auto-weekly-reset:{locked.id}:{credit_id}"))
     result = oauth.consume_reset_credit(
@@ -545,18 +564,28 @@ def auto_redeem_weekly_reset(
         **_provider_call_kwargs(egress_target),
     )
     apply_usage_probe(locked, refreshed)
+    if result["code"] in {"reset", "already_redeemed"} and not refreshed.get("limit_reached"):
+        if all(window.used_pct is None or window.used_pct < window.threshold for window in quota_windows(locked)):
+            locked.cooldown_until = None
+            locked.status = AccountStatus.ACTIVE
     locked.updated_at = datetime.now(timezone.utc)
     db.commit()
     return result["code"] in {"reset", "already_redeemed"}
 
 
-def weekly_reset_recovery_candidates(db: Session) -> list[AccountDb]:
-    """Return exhausted accounts whose cached credit count permits recovery.
+def pool_has_capacity(db: Session, *, model: Optional[str] = None) -> bool:
+    """Busy accounts still count as capacity; contention must not spend credits."""
+    return any(
+        account.chatgpt_account_id and is_available(account) and (not model or supports_model(account, model) is not False)
+        for account in db.query(AccountDb).all()
+    )
 
-    This is intentionally a cheap database-only preflight. The quota refresher
-    performs authoritative provider checks for exhausted accounts even when the
-    cached count is zero; request routing only contacts the provider when its
-    latest known state says a credit is available.
+
+def weekly_reset_recovery_candidates(db: Session, *, model: Optional[str] = None) -> list[AccountDb]:
+    """Known recoverable accounts, latest natural weekly reset first.
+
+    Unknown dates sort last; priority only breaks equal-date ties. Request
+    recovery uses cached credits; the background usage probe refreshes them.
     """
     candidates = [
         account
@@ -568,8 +597,44 @@ def weekly_reset_recovery_candidates(db: Session) -> list[AccountDb]:
         and account.weekly_used_pct is not None
         and account.weekly_used_pct >= 1.0
         and (account.reset_credits_available or 0) > 0
+        and (not model or supports_model(account, model) is not False)
     ]
-    return sorted(candidates, key=account_selection_key)
+
+    def recovery_key(account):
+        date = account.weekly_reset_at
+        if date is not None and date.tzinfo is None:
+            date = date.replace(tzinfo=timezone.utc)
+        return (date is None, -date.timestamp() if date else 0, account.priority, str(account.id))
+
+    return sorted(candidates, key=recovery_key)
+
+
+def recover_exhausted_pool(db: Session, *, model: Optional[str] = None) -> Optional[uuid.UUID]:
+    """Recover at most one account, only after normal pool capacity is gone."""
+    from app.logger import get_logger
+    from app.utils import egress
+
+    if pool_has_capacity(db, model=model):
+        return None
+    for account in weekly_reset_recovery_candidates(db, model=model):
+        if pool_has_capacity(db, model=model):
+            return None
+        account_id = account.id
+        try:
+            target = egress.get_pool().resolve(account.egress_target_id)
+            token = ensure_fresh_token(db, account, egress_target=target)
+            redeemed = auto_redeem_weekly_reset(db, account, token, egress_target=target, model=model)
+            if pool_has_capacity(db, model=model):
+                if redeemed:
+                    get_logger().info("Automatically redeemed a weekly reset for exhausted pool account %s", account_id)
+                return account_id
+            if redeemed:
+                get_logger().info("Automatically redeemed a weekly reset for exhausted pool account %s", account_id)
+                return None
+        except Exception:
+            db.rollback()
+            get_logger().exception("Pool reset recovery failed for account %s", account_id)
+    return None
 
 
 def parse_retry_after(headers: Mapping[str, str], default_seconds: int) -> int:

@@ -77,19 +77,6 @@ def refresh_once() -> None:
                         account.label,
                         type(exc).__name__,
                     )
-                if account.auto_limit_reset_enabled and (account.weekly_used_pct or 0) >= 1.0:
-                    redeemed = rotation.auto_redeem_weekly_reset(
-                        db,
-                        account,
-                        access_token,
-                        egress_target=target,
-                    )
-                    if redeemed:
-                        # auto_redeem_weekly_reset refreshes the authoritative
-                        # usage state after redemption. Avoid notifying from the
-                        # stale pre-redemption probe result.
-                        limit_reached = any(window.used_pct is not None and window.used_pct >= 1.0 for window in rotation.quota_windows(account))
-                        logger.info("Automatically redeemed a weekly limit reset for account '%s'", account.label)
                 provider_health.mark_success(account)
                 account.updated_at = datetime.now(timezone.utc)
                 if limit_reached:
@@ -109,6 +96,9 @@ def refresh_once() -> None:
                     code or "unknown",
                     type(exc).__name__,
                 )
+        # Refresh every account before deciding whether the pool is empty.
+        # A later account's fresh usage may reveal capacity and avoid a reset.
+        rotation.recover_exhausted_pool(db)
 
     # Keep warm-up independent of inference traffic. The advisory lock inside
     # warm_pool_if_needed prevents overlap with request-triggered warm-up tasks.

@@ -113,21 +113,8 @@ _SEARCH_PATH = "/alpha/search"
 _UPSTREAM_PATHS = {*_RESPONSE_OPERATIONS, _SEARCH_PATH}
 
 
-def _recover_exhausted_accounts_with_cached_credits(db: Session) -> None:
-    """Restore exhausted accounts before availability filtering hides them."""
-    for account in rotation.weekly_reset_recovery_candidates(db):
-        if not account.auto_limit_reset_enabled:
-            continue
-        try:
-            target = egress.get_pool().resolve(account.egress_target_id)
-            access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
-            if rotation.auto_redeem_weekly_reset(db, account, access_token, egress_target=target):
-                logger.info("Automatically redeemed a weekly limit reset for pooled account %s", account.label)
-        except Exception:  # noqa: BLE001
-            # Release a possible row lock and leave the remaining accounts
-            # recoverable in this request even if one provider call fails.
-            db.rollback()
-            logger.exception("Automatic weekly limit reset recovery failed for pooled account %s", account.label)
+def _recover_exhausted_accounts_with_cached_credits(db: Session, model: Optional[str] = None) -> Optional[uuid.UUID]:
+    return rotation.recover_exhausted_pool(db, model=model)
 
 
 def _upstream_headers(
@@ -1272,7 +1259,7 @@ async def proxy_search(
     )
 
     upstream_url = _upstream_url(request, _SEARCH_PATH)
-    _recover_exhausted_accounts_with_cached_credits(db)
+    _recover_exhausted_accounts_with_cached_credits(db, model=str(request_model) if request_model else None)
     excluded: Set[uuid.UUID] = set()
     max_attempts = db.query(AccountDb).count()
     pool_wait_deadline = asyncio.get_running_loop().time() + max(0, settings.POOL_WAIT_TIMEOUT_SECONDS)
@@ -1292,6 +1279,11 @@ async def proxy_search(
             excluded,
             model=str(request_model) if request_model else None,
         )
+        if account is None:
+            recovered_id = _recover_exhausted_accounts_with_cached_credits(db, model=str(request_model) if request_model else None)
+            if recovered_id is not None:
+                excluded.discard(recovered_id)
+                account = rotation.select_account(db, user, excluded, model=str(request_model) if request_model else None)
         if account is None:
             now_monotonic = asyncio.get_running_loop().time()
             recoverable = (
@@ -1483,25 +1475,8 @@ async def proxy_search(
         reached_type = body_reached_type or reached_type
         quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
         if account.auto_limit_reset_enabled and (account.weekly_used_pct or 0) >= 1.0:
-            try:
-                target = candidate.extensions.get("proxy_egress_target")
-                access_token = rotation.ensure_fresh_token(
-                    db,
-                    account,
-                    egress_target=target,
-                )
-                redeemed = rotation.auto_redeem_weekly_reset(
-                    db,
-                    account,
-                    access_token,
-                    egress_target=target,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Automatic weekly limit reset failed for pooled account %s",
-                    account.label,
-                )
-                redeemed = False
+            recovered_id = _recover_exhausted_accounts_with_cached_credits(db, model=str(request_model) if request_model else None)
+            redeemed = recovered_id == account.id
             if redeemed and quota_failure:
                 await candidate.aclose()
                 candidate = await _send_account_candidate(
@@ -1817,9 +1792,9 @@ async def proxy_responses(
         request_mode=request_mode,
     )
 
-    # Accounts already stored at 100% are excluded by normal selection. Give
-    # any account with a known reset credit a chance to recover first.
-    _recover_exhausted_accounts_with_cached_credits(db)
+    # Exhausted accounts are excluded by normal selection. Recover one only
+    # when no remaining account can serve this model.
+    _recover_exhausted_accounts_with_cached_credits(db, model=str(request_model) if request_model else None)
 
     excluded: Set[uuid.UUID] = set()
     response: Optional[httpx.Response] = None
@@ -1833,6 +1808,11 @@ async def proxy_responses(
 
     for _ in range(max_attempts + pool_wait_slots):
         account = rotation.select_account(db, user, excluded, model=str(request_model) if request_model else None)
+        if account is None:
+            recovered_id = _recover_exhausted_accounts_with_cached_credits(db, model=str(request_model) if request_model else None)
+            if recovered_id is not None:
+                excluded.discard(recovered_id)
+                account = rotation.select_account(db, user, excluded, model=str(request_model) if request_model else None)
         if account is None:
             # Cooldowns and quota refreshes are asynchronous. Hold the request
             # for a bounded period and re-read the database before giving up;
@@ -2009,18 +1989,8 @@ async def proxy_responses(
         reached_type = body_reached_type or reached_type
         quota_failure = candidate.status_code == 429 or reached_type in rotation.HARD_LIMIT_REACHED_TYPES
         if account.auto_limit_reset_enabled and (account.weekly_used_pct or 0) >= 1.0:
-            try:
-                target = candidate.extensions.get("proxy_egress_target")
-                access_token = rotation.ensure_fresh_token(db, account, egress_target=target)
-                redeemed = rotation.auto_redeem_weekly_reset(
-                    db,
-                    account,
-                    access_token,
-                    egress_target=target,
-                )
-            except Exception:  # noqa: BLE001
-                logger.exception("Automatic weekly limit reset failed for pooled account %s", account.label)
-                redeemed = False
+            recovered_id = _recover_exhausted_accounts_with_cached_credits(db, model=str(request_model) if request_model else None)
+            redeemed = recovered_id == account.id
             if redeemed and quota_failure:
                 await candidate.aclose()
                 candidate = await _send_account_candidate(db, request, body, upstream_url, account)
