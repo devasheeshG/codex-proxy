@@ -176,8 +176,10 @@ disabled by default, including for accounts created before this setting was
 introduced; administrators can enable it in each account's Edit dialog. It is a
 last resort: another available account that can serve the requested model
 always prevents automatic redemption. Once the pool is exhausted, choose an
-opted-in, recoverable account with the latest natural weekly reset date;
-unknown reset dates sort last, and priority only breaks equal-date ties.
+opted-in, recoverable account from the lowest-numbered priority group with
+valid reset credits. Within that group, the latest natural weekly reset date
+wins; unknown reset dates sort last. If no account in that group has usable
+credits, recovery considers the next priority group.
 Within that account, redeem the earliest-expiring valid credit. Recovery stops
 once capacity returns. A pool-wide database lock prevents concurrent workers
 from spending several credits. The background refresher updates every account

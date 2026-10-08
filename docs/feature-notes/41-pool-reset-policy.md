@@ -2,9 +2,11 @@
 
 Normal available accounts are always tried before spending a reset credit.
 When none can serve the requested model, recovery selects an opted-in account
-with exhausted weekly quota and known available credits. The latest natural
-weekly reset date wins; unknown dates sort last, and priority is only a tie
-breaker. Within the chosen account, the earliest-expiring valid credit wins.
+with exhausted weekly quota and known available credits. The lowest-numbered
+priority group with usable credits wins first. Within that group, the latest
+natural weekly reset date wins; unknown dates sort last. If a provider check
+finds no usable credits in a group, recovery proceeds to the next priority.
+Within the chosen account, the earliest-expiring valid credit wins.
 
 Preflight, request failover, post-response handling, and the quota refresher
 share this policy. Busy-but-otherwise-available accounts still count as pool

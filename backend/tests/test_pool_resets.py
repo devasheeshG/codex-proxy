@@ -62,9 +62,9 @@ def test_healthy_pool_prevents_any_reset_probe(seed_account, monkeypatch):
     assert claims == []
 
 
-def test_latest_weekly_reset_wins_over_priority_and_unknown_date(seed_account, monkeypatch):
+def test_latest_weekly_reset_wins_within_priority_and_unknown_dates_sort_last(seed_account, monkeypatch):
     exhausted(seed_account, "near", 1, priority=1)
-    far = exhausted(seed_account, "far", 6, priority=100)
+    far = exhausted(seed_account, "far", 6, priority=1)
     exhausted(seed_account, "unknown", None, priority=1)
     claims = provider(monkeypatch)
     with SessionFactory() as db:
@@ -176,7 +176,7 @@ def test_weekly_429_fails_over_without_spending_when_other_account_serves(client
 @respx.mock
 def test_last_serving_account_exhaustion_recovers_farthest_other_account(client, seed_account, make_user, monkeypatch):
     near = seed_account("near", weekly_used_pct=0.99)
-    far = exhausted(seed_account, "far", 6, priority=100)
+    far = exhausted(seed_account, "far", 6, priority=1)
     with SessionFactory() as db:
         account = db.get(AccountDb, near)
         account.auto_limit_reset_enabled = True
@@ -248,4 +248,54 @@ def test_provider_recovered_window_clears_old_quota_cooldown_without_claim(seed_
     with SessionFactory() as db:
         assert rotation.recover_exhausted_pool(db) == account_id
         assert rotation.is_available(db.get(AccountDb, account_id))
+    assert claims == []
+
+
+def test_reset_priority_group_precedes_farthest_date(seed_account, monkeypatch):
+    expected = exhausted(seed_account, "first-priority", 1, priority=1)
+    exhausted(seed_account, "second-priority", 6, priority=2)
+    claims = provider(monkeypatch)
+    with SessionFactory() as db:
+        assert rotation.recover_exhausted_pool(db) == expected
+    assert claims == ["chatgpt-first-priority"]
+
+
+def test_no_cached_credits_in_first_priority_uses_second_priority(seed_account, monkeypatch):
+    first = exhausted(seed_account, "first-priority", 6, priority=1)
+    expected = exhausted(seed_account, "second-priority", 1, priority=2)
+    with SessionFactory() as db:
+        db.get(AccountDb, first).reset_credits_available = 0
+        db.commit()
+    claims = provider(monkeypatch)
+    with SessionFactory() as db:
+        assert rotation.recover_exhausted_pool(db) == expected
+    assert claims == ["chatgpt-second-priority"]
+
+
+def test_provider_finds_no_valid_priority_one_credit_then_uses_priority_two(seed_account, monkeypatch):
+    exhausted(seed_account, "first-priority", 6, priority=1)
+    expected = exhausted(seed_account, "second-priority", 1, priority=2)
+    claims = provider(monkeypatch)
+    original = rotation.oauth.list_reset_credits
+
+    def credits(token, account_id, **kwargs):
+        if account_id == "chatgpt-first-priority":
+            return {
+                "available_count": 1,
+                "credits": [{"id": "expired", "status": "available", "expires_at": datetime.now(timezone.utc) - timedelta(hours=1)}],
+            }
+        return original(token, account_id, **kwargs)
+
+    monkeypatch.setattr(rotation.oauth, "list_reset_credits", credits)
+    with SessionFactory() as db:
+        assert rotation.recover_exhausted_pool(db) == expected
+    assert claims == ["chatgpt-second-priority"]
+
+
+def test_healthy_next_priority_prevents_claim_on_exhausted_first_priority(seed_account, monkeypatch):
+    exhausted(seed_account, "first-priority", 6, priority=1)
+    seed_account("second-priority", weekly_used_pct=0.3, priority=2)
+    claims = provider(monkeypatch)
+    with SessionFactory() as db:
+        assert rotation.recover_exhausted_pool(db) is None
     assert claims == []

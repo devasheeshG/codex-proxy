@@ -477,7 +477,7 @@ def auto_redeem_weekly_reset(
     egress_target: "EgressTarget | None" = None,
     model: Optional[str] = None,
 ) -> bool:
-    """Spend a reset only for the farthest-reset candidate in an exhausted pool."""
+    """Spend a reset for the priority-first, farthest-reset exhausted candidate."""
     if not account.auto_limit_reset_enabled:
         return False
     if account.weekly_used_pct is None or account.weekly_used_pct < 1.0 or not account.chatgpt_account_id:
@@ -546,6 +546,9 @@ def auto_redeem_weekly_reset(
             continue
         candidates.append((expires_at is None, expires_at or datetime.max.replace(tzinfo=timezone.utc), credit["id"]))
     if not candidates:
+        # No valid, supported, unexpired credit remains on this account.
+        # Let recovery consider the next eligible priority group.
+        locked.reset_credits_available = 0
         db.commit()
         return False
 
@@ -596,10 +599,10 @@ def pool_has_capacity(db: Session, *, model: Optional[str] = None) -> bool:
 
 
 def weekly_reset_recovery_candidates(db: Session, *, model: Optional[str] = None) -> list[AccountDb]:
-    """Known recoverable accounts, latest natural weekly reset first.
+    """Known recoverable accounts, priority group then latest weekly reset.
 
-    Unknown dates sort last; priority only breaks equal-date ties. Request
-    recovery uses cached credits; the background usage probe refreshes them.
+    Lower-numbered priorities win first. Within a priority group, unknown
+    dates sort last. Background probes refresh the cached credit counts.
     """
     candidates = [
         account
@@ -618,7 +621,7 @@ def weekly_reset_recovery_candidates(db: Session, *, model: Optional[str] = None
         date = account.weekly_reset_at
         if date is not None and date.tzinfo is None:
             date = date.replace(tzinfo=timezone.utc)
-        return (date is None, -date.timestamp() if date else 0, account.priority, str(account.id))
+        return (account.priority, date is None, -date.timestamp() if date else 0, str(account.id))
 
     return sorted(candidates, key=recovery_key)
 
