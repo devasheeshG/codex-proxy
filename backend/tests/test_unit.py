@@ -360,6 +360,116 @@ def test_usage_from_json_event_list_and_direct_token_block():
     assert direct.output_tokens == 2
 
 
+########################################################################
+# Regression tests for proxy SSE sanitization bugs
+########################################################################
+
+
+def test_synthetic_completion_has_id_field():
+    """_SYNTHETIC_COMPLETION must include an ``id`` field so that Codex CLI's
+    ``ResponseCompleted`` parser does not crash with 'missing field id'.
+    This was the root cause of 'stream disconnected before completion'.
+    """
+    from app.routes.proxy import _SYNTHETIC_COMPLETION
+
+    # Parse the SSE data line
+    for line in _SYNTHETIC_COMPLETION.decode().splitlines():
+        if line.startswith("data:"):
+            payload = json.loads(line[len("data:"):].strip())
+            response = payload.get("response", {})
+            assert "id" in response, (
+                "_SYNTHETIC_COMPLETION response must contain an 'id' field"
+            )
+            assert response["id"], "id must be a non-empty string"
+            break
+    else:
+        raise AssertionError("No data: line found in _SYNTHETIC_COMPLETION")
+
+
+def test_is_provider_error_frame_ignores_user_content():
+    """_is_provider_error_frame must not trigger on error-like strings that
+    appear in user message content echoed within SSE ``data:`` payloads.
+    A conversation about errors must not be classified as a provider failure.
+    """
+    from app.routes.proxy import _is_provider_error_frame
+
+    # An SSE frame that echoes user history mentioning "response.failed" and
+    # "status": "failed" as part of conversation content, not an actual error.
+    history_frame = (
+        b'event: response.output_text.delta\n'
+        b'data: {"type":"response.output_text.delta","delta":"The error shows '
+        b'response.failed and \\"status\\":\\"failed\\" in the logs."}\n'
+    )
+    assert not _is_provider_error_frame(history_frame), (
+        "_is_provider_error_frame must not match error strings inside user content"
+    )
+
+    # An SSE frame with capacity phrases in user-authored text
+    capacity_frame = (
+        b'event: response.output_text.delta\n'
+        b'data: {"type":"response.output_text.delta","delta":"The server is '
+        b'at capacity and you should try a different model."}\n'
+    )
+    assert not _is_provider_error_frame(capacity_frame), (
+        "_is_provider_error_frame must not match capacity phrases in user content"
+    )
+
+
+def test_is_provider_error_frame_catches_real_errors():
+    """Real provider error SSE frames (not echoed user content) must still be
+    detected correctly after fixing false-positive matching.
+    """
+    from app.routes.proxy import _is_provider_error_frame
+
+    # Actual provider error frame
+    real_error = (
+        b'event: error\n'
+        b'data: {"type":"error","code":"server_error","message":"Internal server error"}\n'
+    )
+    assert _is_provider_error_frame(real_error)
+
+    # Actual response.failed event
+    failed_event = (
+        b'event: response.failed\n'
+        b'data: {"type":"response.failed","response":{"status":"failed",'
+        b'"error":{"type":"server_error","message":"overloaded"}}}\n'
+    )
+    assert _is_provider_error_frame(failed_event)
+
+
+def test_sanitize_sse_replaces_error_with_valid_completion():
+    """_sanitize_sse_payload must produce a response.completed event with a
+    valid ``id`` field when replacing a provider error frame.
+    """
+    from app.routes.proxy import _sanitize_sse_payload
+
+    sse_with_error = (
+        b'event: response.created\n'
+        b'data: {"type":"response.created","response":{"id":"resp_123","status":"in_progress"}}\n\n'
+        b'event: response.failed\n'
+        b'data: {"type":"response.failed","response":{"status":"failed","error":{"type":"server_error"}}}\n\n'
+    )
+    result = _sanitize_sse_payload(sse_with_error)
+    # Find the synthetic completion in the output
+    for line in result.decode().splitlines():
+        if line.startswith("data:") and "response.completed" in line:
+            payload = json.loads(line[len("data:"):].strip())
+            response = payload.get("response", {})
+            assert "id" in response, "Sanitized completion must have an id"
+            break
+
+
+def test_output_delta_markers_include_custom_tool_call():
+    """_OUTPUT_DELTA_MARKERS must include custom_tool_call_input.delta so
+    compaction and tool-call streams are recognized as having started output.
+    """
+    from app.routes.proxy import _OUTPUT_DELTA_MARKERS
+
+    assert any("custom_tool_call_input" in m for m in _OUTPUT_DELTA_MARKERS), (
+        "_OUTPUT_DELTA_MARKERS must recognize response.custom_tool_call_input.delta"
+    )
+
+
 def test_pricing_separates_fresh_cache_read_and_cache_write_input():
     value = pricing.cost_usd(
         "gpt-5.6-sol",
