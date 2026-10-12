@@ -249,14 +249,15 @@ rows together.
 | `fallback.transient_error` | A fallback emits a retryable pre-output error. | Upstream | A short circuit-breaker cooldown is applied. |
 | `fallback.error` | A fallback request fails before a response arrives. | — | The provider is marked degraded/cooling down. |
 | `fallback.response_received` | A fallback provider has returned a response candidate. | Candidate | Fallback routing stops and the response is processed. |
-| `response.returned` | The proxy has a final upstream response to return. | Final HTTP status | Usage is parsed and written to the usage ledger. |
+| `response.returned` | The proxy starts returning the selected upstream response. | HTTP status | For streams, usage is recorded when the stream finishes or disconnects. |
 | `request.exhausted` | No eligible subscription account or fallback can serve the request. | `503` | The client receives 503; pool/elevated-503 notifications may be queued. |
 
 Operational rows can show the request's input/output/cache/cost values even
 when that particular event did not consume tokens. Those values come from the
 single usage record for the same request. A dash means no usage record or no
-reported value; zero means a usage record exists and the provider reported no
-tokens. Unknown models have no pricing entry and therefore have an estimated
+reported value. Zero means a usage record exists with zero captured tokens;
+an interrupted stream may end before the provider reports usage. Pending requests
+have no final token counts, cost, or TPS yet. Unknown models have no pricing entry and therefore have an estimated
 cost of zero.
 
 ### API fallbacks
@@ -293,10 +294,14 @@ client key
    └─ stream response, record usage/cost, emit events, return consistent usage data
 ```
 
-The proxy never returns an upstream capacity message after a successful retry on
-another account. It only returns an error after the account and fallback budgets
-are genuinely exhausted. Usage headers and `/api/v1/me/usage` use the same
-pool-level calculation rather than whichever account happened to answer last.
+Failures detected before output can trigger account failover. Once streaming
+starts, provider failure events are preserved so clients receive the real outcome;
+the proxy never fabricates a successful completion. SSE error inspection is
+bounded to five seconds, including streams without a Content-Type header, and
+comment keepalives are sent every ten seconds during upstream silence. This lets
+long inline compactions continue without withholding all events until completion.
+Usage headers and `/api/v1/me/usage` use the same pool-level calculation rather
+than whichever account happened to answer last.
 
 The default ceiling is **3 concurrent requests per account**. It is deliberately
 configurable and should be calibrated for the provider, subscription tier, and

@@ -13,6 +13,7 @@ from math import ceil
 from typing import Dict, List, Literal, Mapping, Optional, Set, Tuple
 from urllib.parse import urlencode
 
+import anyio
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from fastapi.responses import Response, StreamingResponse
@@ -291,28 +292,28 @@ class _PrefetchedResponse:
         return getattr(self._response, name)
 
     async def aclose(self) -> None:
-        if self._pending_read is not None:
-            self._pending_read.cancel()
+        with anyio.CancelScope(shield=True):
             try:
-                await self._pending_read
-            except (asyncio.CancelledError, StopAsyncIteration, Exception):  # noqa: BLE001
-                pass
-            self._pending_read = None
-        await self._response.aclose()
+                if self._pending_read is not None:
+                    task, self._pending_read = self._pending_read, None
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+            finally:
+                await self._response.aclose()
+
+    async def _remaining_bytes(self):
+        if self._pending_read is not None:
+            task, self._pending_read = self._pending_read, None
+            try:
+                yield await task
+            except StopAsyncIteration:
+                return
+        async for chunk in self._iterator:
+            yield chunk
 
     async def aread(self) -> bytes:
         if self._body is None:
-            parts = [self._prefix]
-            # Drain a pending read from the prefetch phase
-            if self._pending_read is not None:
-                try:
-                    chunk = await self._pending_read
-                    parts.append(chunk)
-                except (StopAsyncIteration, asyncio.CancelledError, Exception):  # noqa: BLE001
-                    pass
-                self._pending_read = None
-            parts.extend([chunk async for chunk in self._iterator])
-            self._body = b"".join(parts)
+            self._body = self._prefix + b"".join([chunk async for chunk in self._remaining_bytes()])
             self._prefix = b""
         return self._body
 
@@ -322,17 +323,9 @@ class _PrefetchedResponse:
                 yield self._body
             return
         if self._prefix:
-            yield self._prefix
-            self._prefix = b""
-        # Drain a pending read task before continuing the iterator
-        if self._pending_read is not None:
-            try:
-                chunk = await self._pending_read
-                yield chunk
-            except (StopAsyncIteration, asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-            self._pending_read = None
-        async for chunk in self._iterator:
+            prefix, self._prefix = self._prefix, b""
+            yield prefix
+        async for chunk in self._remaining_bytes():
             yield chunk
 
 
@@ -343,415 +336,153 @@ _CAPACITY_PHRASES = (
     "temporarily overloaded",
 )
 
-# Event type strings that indicate a provider failure.  These are matched
-# against structured SSE envelope fields (``event:`` line and top-level
-# ``type``/``status`` JSON keys) -- never against free-form user text.
-_FAIL_EVENT_TYPES = frozenset({
-    "error",
-    "response.failed",
-})
-_FAIL_STATUSES = frozenset({
-    "failed",
-})
-
-_OUTPUT_DELTA_MARKERS = (
-    "response.output_text.delta",
-    "response.content_part.delta",
-    "response.function_call_arguments.delta",
-    "response.reasoning_summary_text.delta",
-    "response.reasoning_text.delta",
-    "response.custom_tool_call_input.delta",
-    "output_text.delta",
-    "content_part.delta",
-    "custom_tool_call_input.delta",
+_OUTPUT_EVENT_TYPES = frozenset(
+    {
+        "response.output_text.delta",
+        "response.content_part.delta",
+        "response.function_call_arguments.delta",
+        "response.reasoning_summary_text.delta",
+        "response.reasoning_text.delta",
+        "response.custom_tool_call_input.delta",
+        "response.output_item.done",
+    }
 )
-_SUCCESS_MARKERS = ("response.completed",)
-
-# Event types that indicate real output has started flowing.  Used by the
-# structured SSE classifier alongside _OUTPUT_DELTA_MARKERS (which are
-# matched on raw lowered text for backward compatibility).
-_OUTPUT_EVENT_TYPES = frozenset({
-    "response.output_text.delta",
-    "response.content_part.delta",
-    "response.function_call_arguments.delta",
-    "response.reasoning_summary_text.delta",
-    "response.reasoning_text.delta",
-    "response.custom_tool_call_input.delta",
-    "response.output_item.done",
-})
-
-# Compaction / progress events that indicate work is ongoing even though no
-# output delta has been emitted yet.
-_PROGRESS_EVENT_TYPES = frozenset({
-    "response.context_compaction.progress",
-    "response.queued",
-    "response.in_progress",
-})
+_SSE_PREFETCH_SECONDS = 5.0
+_SSE_KEEPALIVE_SECONDS = 10.0
 
 
-def _parse_sse_envelope(frame: bytes) -> tuple[str, str, str, str]:
-    """Extract structured SSE fields from a single frame.
-
-    Returns (event_line_value, json_type, json_status, json_error_type).
-    All values are lowered strings; empty when absent.  This inspects
-    only the SSE protocol envelope -- never user-authored ``delta`` or
-    ``text`` content that may contain error-like substrings.
-    """
-    event_value = ""
-    json_type = ""
-    json_status = ""
-    json_error_type = ""
-
-    for line in frame.split(b"\n"):
-        stripped = line.strip()
-        if stripped.startswith(b"event:"):
-            event_value = stripped[6:].strip().decode(errors="replace").lower()
-        elif stripped.startswith(b"data:"):
-            raw_json = stripped[5:].strip()
-            if not raw_json or raw_json == b"[DONE]":
-                continue
-            try:
-                obj = json.loads(raw_json)
-            except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
-                continue
-            if isinstance(obj, dict):
-                json_type = str(obj.get("type", "")).lower()
-                # Check response.status for response.failed events
-                resp = obj.get("response")
-                if isinstance(resp, dict):
-                    json_status = str(resp.get("status", "")).lower()
-                    err = resp.get("error")
-                    if isinstance(err, dict):
-                        json_error_type = str(err.get("type", "")).lower()
-                else:
-                    json_status = str(obj.get("status", "")).lower()
-                    err = obj.get("error")
-                    if isinstance(err, dict):
-                        json_error_type = str(err.get("type", "")).lower()
-    return event_value, json_type, json_status, json_error_type
-
-
-def _is_pre_output_failure(lowered: str) -> bool:
-    """Return True if the lowered SSE text shows a failure with no output.
-
-    For the prefetch buffer (which may span multiple frames), we still use
-    text scanning but restrict failure detection to structured envelope
-    patterns that cannot appear in user content.
-    """
-    # Check for output markers (these are safe -- event type strings)
-    has_output = any(m in lowered for m in _OUTPUT_DELTA_MARKERS)
-    if has_output:
-        return False
-
-    # Parse each SSE frame individually for structured failure detection
-    # Split on double-newline boundaries to find frames
-    frames = re.split(r"\n\n|\r\n\r\n", lowered)
-    for frame_text in frames:
-        if not frame_text.strip():
-            continue
-        try:
-            event_val, json_type, json_status, _json_err_type = _parse_sse_envelope(frame_text.encode())
-        except Exception:  # noqa: BLE001
-            continue
-        if event_val in _FAIL_EVENT_TYPES or json_type in _FAIL_EVENT_TYPES:
-            return True
-        if json_status in _FAIL_STATUSES:
-            return True
-    return False
+def _sse_event(frame: bytes) -> tuple[str, dict]:
+    event_type = ""
+    data = []
+    for line in frame.splitlines():
+        if line.startswith(b"event:"):
+            event_type = line[6:].strip().decode(errors="replace")
+        elif line.startswith(b"data:"):
+            data.append(line[5:].lstrip())
+    try:
+        payload = json.loads(b"\n".join(data))
+    except (ValueError, UnicodeDecodeError):
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    return payload.get("type") or event_type, payload
 
 
 def _is_provider_error_frame(frame: bytes) -> bool:
-    """Identify an upstream failure SSE frame without exposing it downstream.
+    kind, payload = _sse_event(frame)
+    response = payload.get("response")
+    return kind in {"error", "response.failed"} or (isinstance(response, dict) and response.get("status") == "failed")
 
-    Providers can emit a capacity/error event after output has started. Once
-    bytes have reached a client we cannot safely retry on another account
-    without duplicating text, so suppress the failure and close cleanly.
 
-    This function parses the SSE envelope (``event:`` line and top-level
-    ``type``/``status`` JSON fields) rather than scanning the entire frame
-    text.  The old approach matched substrings like ``"status":"failed"``
-    against the full frame bytes, which caused false positives when user
-    conversation content -- echoed back in ``response.output_text.delta``
-    payloads -- happened to mention errors or capacity phrases.
+def _classify_sse_prefix(raw: bytes) -> tuple[bool, bool, bool]:
+    """Classify complete protocol frames, never strings in echoed history.
+
+    Return (capacity failure, other pre-output failure, output/terminal seen).
+    A failure after output belongs to the client; replaying would duplicate it.
     """
-    event_value, json_type, json_status, json_error_type = _parse_sse_envelope(frame)
-
-    # Check if this is an output-bearing frame (never suppress these)
-    if json_type in _OUTPUT_EVENT_TYPES or event_value in _OUTPUT_EVENT_TYPES:
-        return False
-
-    # Structured failure: event type or JSON type indicates an error
-    if event_value in _FAIL_EVENT_TYPES or json_type in _FAIL_EVENT_TYPES:
-        return True
-    if json_status in _FAIL_STATUSES:
-        return True
-
-    # Capacity phrases checked ONLY in the error message, not user content
-    if json_error_type:
-        lowered_err = json_error_type.lower()
-        if any(phrase in lowered_err for phrase in _CAPACITY_PHRASES):
-            return True
-
-    # For actual error frames (event: error), check the message field
-    # but only when we've already confirmed this is a structured error event
-    if event_value == "error" or json_type == "error":
-        return True
-
-    return False
-
-
-def _synthetic_completion_bytes(response_id: str = "") -> bytes:
-    """Build a synthetic response.completed SSE frame with a valid ``id``.
-
-    The Codex CLI parses ``ResponseCompleted`` and requires ``response.id``
-    to be present.  Omitting it caused the 'missing field id' parse error that
-    disconnected every compaction and long-running stream that hit a sanitized
-    failure path.
-    """
-    rid = response_id or f"resp_synth_{uuid.uuid4().hex[:12]}"
-    payload = {
-        "type": "response.completed",
-        "response": {
-            "id": rid,
-            "status": "completed",
-            "output": [],
-        },
-    }
-    return f"event: response.completed\ndata: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
-
-
-# Legacy constant kept for fast-path references; each call-site should prefer
-# _synthetic_completion_bytes() to produce a unique id per stream.
-_SYNTHETIC_COMPLETION = _synthetic_completion_bytes()
+    has_output = False
+    for frame in re.split(rb"\r?\n\r?\n", raw)[:-1]:
+        kind, payload = _sse_event(frame)
+        if kind in _OUTPUT_EVENT_TYPES or kind in {"response.completed", "response.incomplete"}:
+            has_output = True
+        if _is_provider_error_frame(frame) and not has_output:
+            response = payload.get("response")
+            error = payload.get("error") or (response.get("error") if isinstance(response, dict) else None)
+            error = error if isinstance(error, dict) else {}
+            message = str(error.get("message") or payload.get("message") or "").lower()
+            capacity = any(phrase in message for phrase in _CAPACITY_PHRASES)
+            return capacity, not capacity, False
+    return False, False, has_output
 
 
 def _sanitize_sse_payload(raw: bytes) -> bytes:
-    """Remove provider error frames and finish a fully-buffered stream cleanly."""
-    output = bytearray()
-    remaining = raw
-
-    # Try to extract a response id from an earlier frame for the synthetic event
-    response_id = ""
-    id_match = re.search(rb'"id"\s*:\s*"(resp_[^"]+)"', raw)
-    if id_match:
-        response_id = id_match.group(1).decode(errors="replace")
-
-    while remaining:
-        match = re.search(rb"\r?\n\r?\n", remaining)
-        if match is None:
-            if not _is_provider_error_frame(remaining):
-                output.extend(remaining)
-            break
-        end = match.end()
-        frame = remaining[: match.start()]
-        if _is_provider_error_frame(frame):
-            output.extend(_synthetic_completion_bytes(response_id))
-            return bytes(output)
-        output.extend(remaining[:end])
-        remaining = remaining[end:]
-    return bytes(output)
+    """Preserve provider terminal events and usage, including actual failures."""
+    return raw
 
 
 async def _iter_sanitized_sse(response: httpx.Response):
-    """Stream SSE frames while never forwarding provider failure events."""
+    """Relay complete frames unchanged, with comments during upstream silence.
+
+    Pre-output failures are handled by account selection. After committing a
+    stream, forward the real outcome rather than fabricating successful output.
+    """
+    iterator = response.aiter_bytes().__aiter__()
     buffer = bytearray()
-    response_id = ""
-    async for chunk in response.aiter_bytes():
-        buffer.extend(chunk)
+    pending = None
+    try:
         while True:
-            match = re.search(rb"\r?\n\r?\n", buffer)
-            if match is None:
+            if pending is None:
+                pending = asyncio.create_task(iterator.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=_SSE_KEEPALIVE_SECONDS)
+            if not done:
+                yield b": proxy keepalive\n\n"
+                continue
+            task, pending = pending, None
+            try:
+                buffer.extend(task.result())
+            except StopAsyncIteration:
                 break
-            end = match.end()
-            frame = bytes(buffer[: match.start()])
-            separator = match.group(0)
-            del buffer[:end]
-
-            # Capture response id from early frames for synthetic completion
-            if not response_id:
-                id_match = re.search(rb'"id"\s*:\s*"(resp_[^"]+)"', frame)
-                if id_match:
-                    response_id = id_match.group(1).decode(errors="replace")
-
-            if _is_provider_error_frame(frame):
-                yield _synthetic_completion_bytes(response_id)
-                return
-            yield bytes(frame) + separator
-    if buffer and not _is_provider_error_frame(bytes(buffer)):
-        yield bytes(buffer)
-
-
-async def _empty_aiter():
-    """Yield nothing -- used as the remaining-bytes iterator for fully-read responses."""
-    return
-    yield  # noqa: RET504  -- makes this an async generator
+            while match := re.search(rb"\r?\n\r?\n", buffer):
+                end = match.end()
+                frame = bytes(buffer[:end])
+                del buffer[:end]
+                yield frame
+        if buffer:
+            yield bytes(buffer)
+    finally:
+        if pending is not None:
+            with anyio.CancelScope(shield=True):
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
 
 
 async def _prepare_candidate(candidate: httpx.Response):
-    """Inspect the beginning of a successful SSE response for early failures.
+    """Bound error prefetch without buffering headerless SSE to completion.
 
-    The proxy must not start forwarding a stream to the client until there is
-    reasonable confidence the upstream will produce output.  This function
-    buffers SSE frames and keeps reading until one of three outcomes:
-
-    1. An **output-delta** event is seen  -> the model is generating; start
-       streaming (return ``capacity_error=False``).
-    2. A **response.failed** / capacity phrase is seen *without* any output
-       delta  -> the request failed before generating; the caller can safely
-       retry on the next account (``capacity_error=True``).
-    3. A safety bound is reached (64 KB or 90 s total prefetch time) without
-       either signal -> begin streaming the buffered response.  A slow model
-       can legitimately emit metadata/keepalives before its first output;
-       treating that silence as capacity exhaustion incorrectly parks healthy
-       fallbacks in ``COOLDOWN``.
-
-    The timeout uses ``asyncio.shield`` around the iterator read to avoid
-    cancelling the underlying httpx stream.  A cancelled ``__anext__`` task
-    corrupts the transport; instead we keep a pending-read task alive and
-    hand it to _PrefetchedResponse which awaits or cancels it only at
-    stream close.
+    Keep a timed-out read alive for the stream consumer. Missing Content-Type
+    is sniffed from the same iterator; JSON is buffered only by JSON callers.
     """
     if candidate.status_code != 200:
         return candidate
     content_type = candidate.headers.get("content-type", "").lower()
-
-    # The Codex upstream sometimes omits the Content-Type header entirely
-    # even though it sends a valid SSE stream.  Detect this by peeking at
-    # the first bytes: if they start with "event:" or "data:", treat the
-    # response as an SSE stream regardless of the header.
-    is_sse = "text/event-stream" in content_type
-
-    if not is_sse:
-        raw = await candidate.aread()
-        lowered = raw.decode(errors="replace").lower()
-
-        # If the body looks like SSE events, reclassify.
-        if raw.lstrip().startswith((b"event:", b"data:")):
-            is_sse = True
-        else:
-            candidate.extensions["proxy_capacity_error"] = any(p in lowered for p in _CAPACITY_PHRASES)
-            candidate.extensions["proxy_pre_output_failure"] = _is_pre_output_failure(lowered)
-            return candidate
-
-    if is_sse and hasattr(candidate, "_content") and candidate._content:
-        # We already consumed the body via aread() above; wrap it as a
-        # _PrefetchedResponse so the SSE prefetch logic can inspect it.
-        lowered = candidate._content.decode(errors="replace").lower()
-        is_capacity_error = any(p in lowered for p in _CAPACITY_PHRASES)
-        is_pre_output_failure = _is_pre_output_failure(lowered)
-        if is_capacity_error:
-            return _PrefetchedResponse(
-                candidate,
-                candidate._content,
-                _empty_aiter(),
-                True,
-                is_pre_output_failure,
-            )
-        return _PrefetchedResponse(
-            candidate,
-            candidate._content,
-            _empty_aiter(),
-            False,
-            is_pre_output_failure,
-        )
-
     iterator = candidate.aiter_bytes().__aiter__()
     prefix = bytearray()
-    prefetch_deadline = asyncio.get_event_loop().time() + 90
-    first_byte_timeout = 60
-    chunks_read = 0
-
-    # Pending read task: instead of asyncio.wait_for (which cancels the
-    # iterator's __anext__ coroutine on timeout, leaving the httpx stream
-    # broken), we wrap reads in an asyncio.Task and wait with a timeout.
-    # On timeout the task stays alive and is passed to _PrefetchedResponse
-    # which will await it on the next iteration or cancel+join at close.
-    pending_read: asyncio.Task | None = None
-
+    deadline = asyncio.get_running_loop().time() + _SSE_PREFETCH_SECONDS
+    pending = None
     try:
         while len(prefix) < 64 * 1024:
-            elapsed = asyncio.get_event_loop().time()
-            if elapsed >= prefetch_deadline:
-                logger.warning("Upstream produced no output before the SSE prefetch deadline; streaming the response")
-                return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False, pending_read=pending_read)
-            remaining = max(1, prefetch_deadline - elapsed)
-            timeout = min(
-                first_byte_timeout if not prefix else 30,
-                remaining,
-            )
-
-            if pending_read is not None:
-                # A previous iteration timed out but the read task is still
-                # pending; wait for it to deliver the chunk it is reading.
-                read_task = pending_read
-                pending_read = None
-            else:
-                read_task = asyncio.ensure_future(iterator.__anext__())
-
-            try:
-                done, _ = await asyncio.wait({read_task}, timeout=timeout)
-            except asyncio.CancelledError:
-                # The outer scope was cancelled (e.g. client disconnect).
-                # Cancel the read task and re-raise so cleanup proceeds.
-                read_task.cancel()
-                try:
-                    await read_task
-                except (asyncio.CancelledError, StopAsyncIteration, Exception):  # noqa: BLE001
-                    pass
-                raise
-
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            pending = asyncio.create_task(iterator.__anext__())
+            done, _ = await asyncio.wait({pending}, timeout=remaining)
             if not done:
-                # Timeout: the read task is still pending.  Keep it alive
-                # so the iterator is not corrupted; _PrefetchedResponse
-                # will hand it off or cancel+join it at close time.
-                logger.warning("Upstream produced no output within the SSE prefetch timeout; streaming the response")
-                return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False, pending_read=read_task)
-
+                break
+            task, pending = pending, None
             try:
-                chunk = read_task.result()
+                prefix.extend(task.result())
             except StopAsyncIteration:
                 break
-            except Exception:
-                # Transport error; fall through so the response is returned
-                # as-is for the caller to handle.
-                break
-
-            chunks_read += 1
-            prefix.extend(chunk)
-            lowered = bytes(prefix).decode(errors="replace").lower()
-
-            # Explicit capacity phrases -> always retry.
-            if any(p in lowered for p in _CAPACITY_PHRASES):
-                return _PrefetchedResponse(
-                    candidate,
-                    bytes(prefix),
-                    iterator,
-                    True,
-                    _is_pre_output_failure(lowered),
-                )
-
-            has_output = any(m in lowered for m in _OUTPUT_DELTA_MARKERS)
-            completed = any(m in lowered for m in _SUCCESS_MARKERS)
-
-            # Real output is flowing -> response is healthy, start streaming.
-            if has_output or completed:
-                return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False)
-
-            if _is_pre_output_failure(lowered):
-                return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, True)
-
-    except asyncio.CancelledError:
-        # Ensure we don't leak the pending read task
-        if pending_read is not None:
-            pending_read.cancel()
-            try:
-                await pending_read
-            except (asyncio.CancelledError, StopAsyncIteration, Exception):  # noqa: BLE001
-                pass
+            stripped = prefix.lstrip()
+            if "text/event-stream" not in content_type:
+                if stripped.startswith((b"event:", b"data:", b":")):
+                    content_type = "text/event-stream"
+                    candidate.headers["content-type"] = content_type
+                elif stripped and not any(mark.startswith(stripped) for mark in (b"event:", b"data:", b":")):
+                    # Non-SSE JSON must retain its native wire format.
+                    return _PrefetchedResponse(candidate, bytes(prefix), iterator, False)
+            if "text/event-stream" in content_type:
+                capacity, failure, output = _classify_sse_prefix(bytes(prefix))
+                if capacity or failure or output:
+                    return _PrefetchedResponse(candidate, bytes(prefix), iterator, capacity, failure)
+        return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, pending_read=pending)
+    except BaseException:
+        with anyio.CancelScope(shield=True):
+            if pending is not None:
+                pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+            await candidate.aclose()
         raise
-
-    logger.warning("Upstream filled the SSE prefetch buffer without producing output; streaming the response")
-    return _PrefetchedResponse(candidate, bytes(prefix), iterator, False, False)
 
 
 async def _is_empty_upstream_404(candidate: httpx.Response) -> bool:
@@ -1236,17 +967,23 @@ async def _send_candidate(
     try:
         candidate = await _prepare_candidate(await connection.client.send(upstream_request, stream=True))
     except BaseException:
-        lease.release()
-        await connection.aclose()
+        with anyio.CancelScope(shield=True):
+            try:
+                lease.release()
+            finally:
+                await connection.aclose()
         raise
     original_aclose = candidate.aclose
 
     async def close_with_lease():
-        try:
-            await original_aclose()
-        finally:
-            lease.release()
-            await connection.aclose()
+        with anyio.CancelScope(shield=True):
+            try:
+                await original_aclose()
+            finally:
+                try:
+                    lease.release()
+                finally:
+                    await connection.aclose()
 
     candidate.aclose = close_with_lease
     candidate.extensions["proxy_egress_target"] = connection.target
@@ -1283,17 +1020,23 @@ async def _send_fallback_candidate(
     try:
         candidate = await _prepare_candidate(await connection.client.send(upstream_request, stream=True))
     except BaseException:
-        lease.release()
-        await connection.aclose()
+        with anyio.CancelScope(shield=True):
+            try:
+                lease.release()
+            finally:
+                await connection.aclose()
         raise
     original_aclose = candidate.aclose
 
     async def close_with_lease():
-        try:
-            await original_aclose()
-        finally:
-            lease.release()
-            await connection.aclose()
+        with anyio.CancelScope(shield=True):
+            try:
+                await original_aclose()
+            finally:
+                try:
+                    lease.release()
+                finally:
+                    await connection.aclose()
 
     candidate.aclose = close_with_lease
     candidate.extensions["proxy_egress_target"] = connection.target
@@ -2605,9 +2348,7 @@ async def proxy_responses(
                 for translated in translator.finish():
                     yield translated
             finally:
-                # Record usage BEFORE closing the upstream response.  Shield
-                # the entire cleanup from cancellation so usage is never lost
-                # when a client disconnects mid-stream.
+                # Persist observed usage before asynchronous transport cleanup.
                 try:
                     captured = accumulator.result()
                     _record_usage_safe(
@@ -2625,7 +2366,8 @@ async def proxy_responses(
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to finalize usage in chat stream")
                 finally:
-                    await response.aclose()
+                    with anyio.CancelScope(shield=True):
+                        await response.aclose()
 
         response_headers = {header: value for header, value in response_headers.items() if header.lower() != "content-type"}
         return StreamingResponse(
@@ -2699,9 +2441,7 @@ async def proxy_responses(
                 accumulator.feed(chunk)
                 yield _restore_requested_model_in_sse_frame(chunk, requested_model)
         finally:
-            # Record usage BEFORE closing the upstream response.  Shield
-            # the entire cleanup from cancellation so usage is never lost
-            # when a client disconnects mid-stream.
+            # Persist observed usage before asynchronous transport cleanup.
             try:
                 captured_usage = accumulator.result()
                 if captured_usage.input_tokens == 0 and captured_usage.output_tokens == 0:
@@ -2725,7 +2465,8 @@ async def proxy_responses(
             except Exception:  # noqa: BLE001
                 logger.exception("Failed to finalize usage in stream")
             finally:
-                await response.aclose()
+                with anyio.CancelScope(shield=True):
+                    await response.aclose()
 
     response_headers = {header: value for header, value in response_headers.items() if header.lower() != "content-type"}
     return StreamingResponse(
