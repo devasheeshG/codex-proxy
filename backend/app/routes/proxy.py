@@ -2254,6 +2254,7 @@ async def proxy_responses(
         account_id=chosen_id,
         fallback_provider_id=chosen_fallback_id,
         status_code=response_status,
+        metadata={"request_outcome": "failed" if response_status >= 400 else ("pending" if "text/event-stream" in content_type else "succeeded")},
     )
     _set_archive_metadata(
         request,
@@ -2293,6 +2294,12 @@ async def proxy_responses(
                     reasoning_level=request_reasoning,
                     request_mode=request_mode,
                 )
+        if terminal_response is not None and accumulator.terminal_response is None:
+            accumulator.terminal_response = {
+                **terminal_response,
+                "status": terminal_response.get("status") or ("failed" if terminal_response.get("error") else "completed"),
+            }
+        _emit_stream_outcome(request, accumulator, True, key.user_id, key.id, chosen_id, chosen_fallback_id, response_status)
         _record_usage_safe(
             key.user_id,
             key.id,

@@ -66,6 +66,7 @@ def test_stream_terminal_outcome_overrides_http_200(client, admin_headers):
                     id=uuid.uuid4(),
                     request_id=rid,
                     event_type="response.returned",
+                    metadata_json=json.dumps({"request_outcome": "pending"}),
                     status_code=200,
                     created_at=datetime.now(timezone.utc) - timedelta(seconds=1),
                 )
@@ -76,3 +77,12 @@ def test_stream_terminal_outcome_overrides_http_200(client, admin_headers):
     for rid, expected in [("req_ok", "succeeded"), ("req_bad", "failed"), ("req_pending", "pending")]:
         rows = client.get("/api/v1/events", params={"request_id": rid}, headers=admin_headers).json()["events"]
         assert all(e["metadata"]["request_outcome"] == expected for e in rows)
+
+
+def test_legacy_http_success_does_not_require_retained_usage(client, admin_headers):
+    with SessionFactory() as db:
+        db.add(ProxyEventDb(id=uuid.uuid4(), request_id="req_deleted_success", user_id=uuid.uuid4(), event_type="response.returned", status_code=200))
+        db.commit()
+    row = client.get("/api/v1/events?request_id=req_deleted_success", headers=admin_headers).json()["events"][0]
+    assert row["metadata"]["user_name"] == "Deleted user"
+    assert row["metadata"]["request_outcome"] == "succeeded"

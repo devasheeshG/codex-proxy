@@ -118,7 +118,15 @@ def list_events(
         elif outcome.event_type in {"response.failed", "response.interrupted", "request.exhausted"} or (outcome.status_code or 0) >= 400:
             outcomes[outcome.request_id] = "failed"
         else:
-            outcomes[outcome.request_id] = "succeeded" if outcome.request_id in usage_by_request else "pending"
+            try:
+                stored = json.loads(outcome.metadata_json or "{}").get("request_outcome")
+            except (ValueError, AttributeError):
+                stored = None
+            outcomes[outcome.request_id] = (
+                stored
+                if stored in {"pending", "succeeded", "failed"}
+                else ("succeeded" if outcome.status_code is not None and outcome.status_code < 400 else "pending")
+            )
     account_ids = {row.account_id for row in rows if row.account_id}
     fallback_ids = {row.fallback_provider_id for row in rows if row.fallback_provider_id}
     account_names = {row.id: row.label for row in db.query(AccountDb).filter(AccountDb.id.in_(account_ids)).all()} if account_ids else {}
