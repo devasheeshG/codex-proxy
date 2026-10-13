@@ -529,9 +529,10 @@ def _emit_event(
 
 def _emit_stream_outcome(request, accumulator, finished, user_id, api_key_id, account_id, fallback_id, status_code):
     terminal = accumulator.terminal_response or {}
-    succeeded = finished and (
-        terminal.get("status") == "completed"
-        or ("response.completed" in accumulator.event_types and not accumulator.event_types.intersection({"response.failed", "response.incomplete"}))
+    # The client may close immediately after the terminal event; transport
+    # EOF is not required once protocol completion has been observed.
+    succeeded = terminal.get("status") == "completed" or (
+        "response.completed" in accumulator.event_types and not accumulator.event_types.intersection({"response.failed", "response.incomplete"})
     )
     event_type = "response.completed" if succeeded else ("response.failed" if terminal else "response.interrupted")
     _emit_event(

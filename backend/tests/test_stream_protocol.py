@@ -183,3 +183,14 @@ def test_completed_event_outcome_does_not_require_redundant_status(monkeypatch):
     monkeypatch.setattr(proxy, "_emit_event", lambda request, event_type, **kwargs: recorded.append(event_type))
     proxy._emit_stream_outcome(None, accumulator, True, None, None, None, None, 200)
     assert recorded == ["response.completed"]
+
+
+def test_completed_response_is_success_when_client_closes_before_eof(monkeypatch):
+    from app.utils.usage import StreamUsageAccumulator
+
+    accumulator = StreamUsageAccumulator()
+    accumulator.feed(frame("response.completed", response={"id": "resp_real", "status": "completed"}))
+    recorded = []
+    monkeypatch.setattr(proxy, "_emit_event", lambda request, event_type, **kwargs: recorded.append(event_type))
+    proxy._emit_stream_outcome(None, accumulator, False, None, None, None, None, 200)
+    assert recorded == ["response.completed"]
