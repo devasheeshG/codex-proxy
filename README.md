@@ -217,13 +217,26 @@ capacity or rate-limit result, cooldown, fallback attempt, response, and
 exhaustion. The event table is filterable by date range, user, model, and event
 type, paginated, color-coded by event family, and includes model, thinking level,
 account label, status codes, input/output/cache tokens, estimated cost, and
-request outcome. Request IDs are intentionally not shown in the normal table.
+request outcome. The default **Individual requests** view shows one collapsed
+summary per request, including its metrics and a shortened request ID. Use the
+**Show events / Hide events** button beside its timestamp to expand the complete event history. Pagination
+counts requests and keeps their events together. Event/date filters select the
+matching requests; each returned request includes its complete lifecycle, so
+expansion requires no additional fetch or loading row.
+
+**Agent run** groups by Codex's root turn ID: normally one user message and the
+model/tool requests it triggers. Requests without that identifier stay separate.
 
 Successful and failed requests are both retained. When request archiving is
 enabled, an event can open the exact captured request and response body from
 S3-compatible storage; authorization and cookie headers are never archived.
 Web-search requests still generate routing events, but their bodies are not
 archived, so those events do not offer a capture viewer.
+
+Request summaries are green for success, red for failure, and neutral while
+pending. Stream outcomes are recorded after completion rather than inferred
+from HTTP 200 headers. Event records retain a user-name snapshot; deleted users
+with older records without a name are labeled **Deleted user**.
 
 #### Event types and routing outcomes
 

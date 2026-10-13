@@ -527,6 +527,25 @@ def _emit_event(
         )
 
 
+def _emit_stream_outcome(request, accumulator, finished, user_id, api_key_id, account_id, fallback_id, status_code):
+    terminal = accumulator.terminal_response or {}
+    succeeded = finished and (
+        terminal.get("status") == "completed"
+        or ("response.completed" in accumulator.event_types and not accumulator.event_types.intersection({"response.failed", "response.incomplete"}))
+    )
+    event_type = "response.completed" if succeeded else ("response.failed" if terminal else "response.interrupted")
+    _emit_event(
+        request,
+        event_type,
+        user_id=user_id,
+        api_key_id=api_key_id,
+        account_id=account_id,
+        fallback_provider_id=fallback_id,
+        status_code=status_code,
+        metadata={"request_outcome": "succeeded" if succeeded else "failed"},
+    )
+
+
 def _upstream_diagnostics(candidate: httpx.Response, *, stream_started: bool = False, terminal_event: str | None = None) -> dict:
     """Return non-sensitive upstream facts for incident correlation."""
     headers = {key.lower(): value for key, value in candidate.headers.items()}
@@ -2339,6 +2358,7 @@ async def proxy_responses(
         )
 
         async def chat_stream_body():
+            finished = False
             try:
                 async for chunk in _iter_sanitized_sse(response):
                     accumulator.feed(chunk)
@@ -2347,7 +2367,10 @@ async def proxy_responses(
                         yield translated
                 for translated in translator.finish():
                     yield translated
+                finished = True
             finally:
+                accumulator.result()
+                _emit_stream_outcome(request, accumulator, finished, key.user_id, key.id, chosen_id, chosen_fallback_id, response_status)
                 # Persist observed usage before asynchronous transport cleanup.
                 try:
                     captured = accumulator.result()
@@ -2436,11 +2459,15 @@ async def proxy_responses(
     )
 
     async def stream_body():
+        finished = False
         try:
             async for chunk in _iter_sanitized_sse(response):
                 accumulator.feed(chunk)
                 yield _restore_requested_model_in_sse_frame(chunk, requested_model)
+            finished = True
         finally:
+            accumulator.result()
+            _emit_stream_outcome(request, accumulator, finished, key.user_id, key.id, chosen_id, chosen_fallback_id, response_status)
             # Persist observed usage before asynchronous transport cleanup.
             try:
                 captured_usage = accumulator.result()

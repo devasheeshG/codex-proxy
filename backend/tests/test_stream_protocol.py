@@ -170,4 +170,16 @@ def test_late_failure_keeps_reported_tokens_cost_and_tps(client, admin_headers, 
         rid = row.request_id
     events = client.get("/api/v1/events", params={"request_id": rid}, headers=admin_headers).json()["events"]
     assert events
+    assert all(e["metadata"]["request_outcome"] == "failed" for e in events)
     assert all(e["metadata"]["input_tokens"] == 120 and e["metadata"]["output_tokens"] == 30 for e in events)
+
+
+def test_completed_event_outcome_does_not_require_redundant_status(monkeypatch):
+    from app.utils.usage import StreamUsageAccumulator
+
+    accumulator = StreamUsageAccumulator()
+    accumulator.feed(frame("response.completed", response={"id": "resp_real", "usage": {"input_tokens": 1, "output_tokens": 1}}))
+    recorded = []
+    monkeypatch.setattr(proxy, "_emit_event", lambda request, event_type, **kwargs: recorded.append(event_type))
+    proxy._emit_stream_outcome(None, accumulator, True, None, None, None, None, 200)
+    assert recorded == ["response.completed"]
