@@ -174,6 +174,54 @@ def test_late_failure_keeps_reported_tokens_cost_and_tps(client, admin_headers, 
     assert all(e["metadata"]["input_tokens"] == 120 and e["metadata"]["output_tokens"] == 30 for e in events)
 
 
+def test_delayed_pre_output_failure_retries_next_account(monkeypatch, client, seed_account, make_user):
+    import respx
+
+    class DelayedFailure(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield frame("response.created", response={"id": "resp_first", "status": "in_progress"})
+            await asyncio.sleep(0.05)
+            yield frame("error", message="Selected model is at capacity. Please try a different model.")
+            yield frame(
+                "response.failed",
+                response={
+                    "id": "resp_first",
+                    "status": "failed",
+                    "error": {"message": "Selected model is at capacity. Please try a different model."},
+                },
+            )
+
+    monkeypatch.setattr(proxy, "_SSE_PREFETCH_SECONDS", 0.01)
+    seed_account("delayed-capacity-first")
+    seed_account("delayed-capacity-second")
+    secret = make_user("delayed-capacity-user")
+    completed = frame(
+        "response.completed",
+        response={
+            "id": "resp_second",
+            "status": "completed",
+            "usage": {"input_tokens": 1, "output_tokens": 1},
+        },
+    )
+    with respx.mock:
+        respx.route(host="testserver").pass_through()
+        route = respx.post("https://chatgpt.com/backend-api/codex/responses").mock(
+            side_effect=[
+                httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=DelayedFailure()),
+                httpx.Response(200, headers={"content-type": "text/event-stream"}, content=completed),
+            ]
+        )
+        response = client.post(
+            "/api/v1/responses",
+            headers={"Authorization": f"Bearer {secret}"},
+            json={"model": "gpt-6.1-sol", "input": "test", "stream": True},
+        )
+    assert response.status_code == 200
+    assert route.call_count == 2
+    assert "resp_second" in response.text
+    assert "Selected model is at capacity" not in response.text
+
+
 def test_completed_event_outcome_does_not_require_redundant_status(monkeypatch):
     from app.utils.usage import StreamUsageAccumulator
 

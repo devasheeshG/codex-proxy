@@ -400,6 +400,10 @@ def _sanitize_sse_payload(raw: bytes) -> bytes:
     return raw
 
 
+class _PreOutputProviderFailure(RuntimeError):
+    """An upstream failure arrived before any model output was committed."""
+
+
 async def _iter_sanitized_sse(response: httpx.Response):
     """Relay complete frames unchanged, with comments during upstream silence.
 
@@ -409,6 +413,7 @@ async def _iter_sanitized_sse(response: httpx.Response):
     iterator = response.aiter_bytes().__aiter__()
     buffer = bytearray()
     pending = None
+    output_started = False
     try:
         while True:
             if pending is None:
@@ -426,8 +431,16 @@ async def _iter_sanitized_sse(response: httpx.Response):
                 end = match.end()
                 frame = bytes(buffer[:end])
                 del buffer[:end]
+                kind, _payload = _sse_event(frame)
+                if _is_provider_error_frame(frame) and not output_started:
+                    raise _PreOutputProviderFailure(kind or "provider failure")
+                if kind in _OUTPUT_EVENT_TYPES:
+                    output_started = True
                 yield frame
         if buffer:
+            kind, _payload = _sse_event(bytes(buffer))
+            if _is_provider_error_frame(bytes(buffer)) and not output_started:
+                raise _PreOutputProviderFailure(kind or "provider failure")
             yield bytes(buffer)
     finally:
         if pending is not None:
@@ -2247,16 +2260,17 @@ async def proxy_responses(
     upstream_request_id = response.headers.get("x-request-id") or response.headers.get("request-id")
     content_type = response.headers.get("content-type", "")
     response_status = response.status_code
-    _emit_event(
-        request,
-        "response.returned",
-        user_id=user.id,
-        api_key_id=key.id,
-        account_id=chosen_id,
-        fallback_provider_id=chosen_fallback_id,
-        status_code=response_status,
-        metadata={"request_outcome": "failed" if response_status >= 400 else ("pending" if "text/event-stream" in content_type else "succeeded")},
-    )
+    if "text/event-stream" not in content_type:
+        _emit_event(
+            request,
+            "response.returned",
+            user_id=user.id,
+            api_key_id=key.id,
+            account_id=chosen_id,
+            fallback_provider_id=chosen_fallback_id,
+            status_code=response_status,
+            metadata={"request_outcome": "failed" if response_status >= 400 else "succeeded"},
+        )
     _set_archive_metadata(
         request,
         upstream_request_id=upstream_request_id,
@@ -2467,12 +2481,69 @@ async def proxy_responses(
     )
 
     async def stream_body():
+        nonlocal response, chosen_id, accumulator
         finished = False
+        active_response = response
+        active_account = chosen_id
         try:
-            async for chunk in _iter_sanitized_sse(response):
-                accumulator.feed(chunk)
-                yield _restore_requested_model_in_sse_frame(chunk, requested_model)
-            finished = True
+            while True:
+                try:
+                    async for chunk in _iter_sanitized_sse(active_response):
+                        accumulator.feed(chunk)
+                        yield _restore_requested_model_in_sse_frame(chunk, requested_model)
+                    finished = True
+                    break
+                except _PreOutputProviderFailure as exc:
+                    # The provider rejected this account before any model
+                    # output was committed. Keep the client stream alive and
+                    # move to the next eligible account instead of surfacing
+                    # a mid-turn response.failed event.
+                    await active_response.aclose()
+                    if active_account is not None:
+                        excluded.add(active_account)
+                    _emit_event(
+                        request,
+                        "account.transient_error",
+                        user_id=key.user_id,
+                        api_key_id=key.id,
+                        account_id=active_account,
+                        message=f"Pre-output provider failure; retrying another account: {exc}",
+                        metadata={"failure_class": "pre_output_provider_failure"},
+                    )
+                    next_account = rotation.select_account(
+                        db,
+                        user,
+                        excluded,
+                        model=str(request_model) if request_model else None,
+                    )
+                    if next_account is None:
+                        raise
+                    # Discard protocol metadata from the failed attempt; the
+                    # request outcome belongs to the account that eventually
+                    # serves the stream.
+                    accumulator = usage.StreamUsageAccumulator(
+                        fallback_model=request_model,
+                        reasoning_level=request_reasoning,
+                        request_mode=request_mode,
+                    )
+                    _emit_event(
+                        request,
+                        "account.attempt",
+                        user_id=key.user_id,
+                        api_key_id=key.id,
+                        account_id=next_account.id,
+                        metadata={"priority": next_account.priority, "retry_after_pre_output_failure": True},
+                    )
+                    active_response = await _send_account_candidate(
+                        db,
+                        request,
+                        body,
+                        upstream_url,
+                        next_account,
+                    )
+                    active_account = next_account.id
+                    response = active_response
+                    chosen_id = active_account
         finally:
             accumulator.result()
             _emit_stream_outcome(request, accumulator, finished, key.user_id, key.id, chosen_id, chosen_fallback_id, response_status)
@@ -2501,7 +2572,7 @@ async def proxy_responses(
                 logger.exception("Failed to finalize usage in stream")
             finally:
                 with anyio.CancelScope(shield=True):
-                    await response.aclose()
+                    await active_response.aclose()
 
     response_headers = {header: value for header, value in response_headers.items() if header.lower() != "content-type"}
     return StreamingResponse(
