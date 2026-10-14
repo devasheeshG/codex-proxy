@@ -540,43 +540,51 @@ export default function EventsPage() {
                                     });
                                     const rows: ReactNode[] = [];
                                     groups.forEach((topEvents, topKey) => {
-                                        if (groupBy !== "request") {
-                                            const missing = topKey.startsWith("missing:");
-                                            rows.push(
-                                                <tr
-                                                    key={`group-${topKey}`}
-                                                    className="bg-ink-850 border-ink-700 border-b"
-                                                >
-                                                    <td colSpan={14} className="px-3 py-2 text-xs">
-                                                        <span className="text-fog-200 font-medium">
-                                                            {groupByLabel(groupBy)}
-                                                        </span>
-                                                        <span className="text-fog-500 mx-2">·</span>
-                                                        <span
-                                                            className={
-                                                                missing
-                                                                    ? "text-fog-500"
-                                                                    : "text-brand-300 font-mono"
-                                                            }
+                                        if (true) {
+                                            if (groupBy !== "request") {
+                                                const missing = topKey.startsWith("missing:");
+                                                rows.push(
+                                                    <tr
+                                                        key={`group-${topKey}`}
+                                                        className="bg-ink-850 border-ink-700 border-b"
+                                                    >
+                                                        <td
+                                                            colSpan={14}
+                                                            className="px-3 py-2 text-xs"
                                                         >
-                                                            {missing
-                                                                ? "No identifier in this event"
-                                                                : topKey}
-                                                        </span>
-                                                        <span className="text-fog-500 ml-2">
-                                                            ·{" "}
-                                                            {
-                                                                new Set(
-                                                                    topEvents.map(
-                                                                        (event) => event.request_id,
-                                                                    ),
-                                                                ).size
-                                                            }{" "}
-                                                            requests
-                                                        </span>
-                                                    </td>
-                                                </tr>,
-                                            );
+                                                            <span className="text-fog-200 font-medium">
+                                                                {groupByLabel(groupBy)}
+                                                            </span>
+                                                            <span className="text-fog-500 mx-2">
+                                                                ·
+                                                            </span>
+                                                            <span
+                                                                className={
+                                                                    missing
+                                                                        ? "text-fog-500"
+                                                                        : "text-brand-300 font-mono"
+                                                                }
+                                                            >
+                                                                {missing
+                                                                    ? "No identifier in this event"
+                                                                    : topKey}
+                                                            </span>
+                                                            <span className="text-fog-500 ml-2">
+                                                                ·{" "}
+                                                                {
+                                                                    new Set(
+                                                                        topEvents.map(
+                                                                            (event) =>
+                                                                                event.request_id,
+                                                                        ),
+                                                                    ).size
+                                                                }{" "}
+                                                                requests
+                                                            </span>
+                                                        </td>
+                                                    </tr>,
+                                                );
+                                            }
                                             const requestGroups = new Map<string, ProxyEvent[]>();
                                             topEvents.forEach((event) => {
                                                 const existing = requestGroups.get(
