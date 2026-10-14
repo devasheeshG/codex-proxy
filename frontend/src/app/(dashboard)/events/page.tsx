@@ -224,6 +224,7 @@ export default function EventsPage() {
     const [refreshSecs, setRefreshSecs] = useState(10);
     const [error, setError] = useState<string | null>(null);
     const [captureEventId, setCaptureEventId] = useState<string | null>(null);
+    const [captureSide, setCaptureSide] = useState<"request" | "response">("response");
     const load = useCallback(
         (
             pageOffset = offset,
@@ -692,21 +693,33 @@ export default function EventsPage() {
                                                                 )}
                                                                 {displayOperation(m) !==
                                                                     "Web search" &&
-                                                                (e.event_type ===
-                                                                    "request.received" ||
+                                                                (isSummary ||
                                                                     e.event_type ===
-                                                                        "response.returned") &&
+                                                                        "request.received" ||
+                                                                    [
+                                                                        "response.returned",
+                                                                        "response.completed",
+                                                                        "response.failed",
+                                                                        "response.interrupted",
+                                                                    ].includes(e.event_type)) &&
                                                                 e.archive_hot !== false &&
                                                                 e.request_id?.startsWith("req_") ? (
                                                                     <button
                                                                         type="button"
-                                                                        onClick={() =>
+                                                                        onClick={() => {
+                                                                            setCaptureSide(
+                                                                                !isSummary &&
+                                                                                    e.event_type ===
+                                                                                        "request.received"
+                                                                                    ? "request"
+                                                                                    : "response",
+                                                                            );
                                                                             setCaptureEventId(
                                                                                 e.request_id.slice(
                                                                                     4,
                                                                                 ),
-                                                                            )
-                                                                        }
+                                                                            );
+                                                                        }}
                                                                         className="text-fog-300 hover:text-brand-200 rounded border border-current/30 px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
                                                                     >
                                                                         View capture
@@ -777,6 +790,7 @@ export default function EventsPage() {
             {captureEventId ? (
                 <RequestCaptureOverlay
                     eventId={captureEventId}
+                    initialSide={captureSide}
                     onClose={() => setCaptureEventId(null)}
                 />
             ) : null}
