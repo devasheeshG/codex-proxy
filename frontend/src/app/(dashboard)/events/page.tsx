@@ -245,7 +245,7 @@ export default function EventsPage() {
                     undefined,
                     selectedModel || undefined,
                     selectedOperation || undefined,
-                    groupBy === "request" ? "request" : undefined,
+                    groupBy,
                 )
                 .then((page) => {
                     setEvents(page.events);
@@ -539,12 +539,12 @@ export default function EventsPage() {
                                         else groups.set(key, [event]);
                                     });
                                     const rows: ReactNode[] = [];
-                                    groups.forEach((groupEvents, key) => {
+                                    groups.forEach((topEvents, topKey) => {
                                         if (groupBy !== "request") {
-                                            const missing = key.startsWith("missing:");
+                                            const missing = topKey.startsWith("missing:");
                                             rows.push(
                                                 <tr
-                                                    key={`group-${key}`}
+                                                    key={`group-${topKey}`}
                                                     className="bg-ink-850 border-ink-700 border-b"
                                                 >
                                                     <td colSpan={14} className="px-3 py-2 text-xs">
@@ -561,16 +561,244 @@ export default function EventsPage() {
                                                         >
                                                             {missing
                                                                 ? "No identifier in this event"
-                                                                : key}
+                                                                : topKey}
                                                         </span>
                                                         <span className="text-fog-500 ml-2">
-                                                            · {groupEvents.length} events on this
-                                                            page
+                                                            ·{" "}
+                                                            {
+                                                                new Set(
+                                                                    topEvents.map(
+                                                                        (event) => event.request_id,
+                                                                    ),
+                                                                ).size
+                                                            }{" "}
+                                                            requests
                                                         </span>
                                                     </td>
                                                 </tr>,
                                             );
+                                            const requestGroups = new Map<string, ProxyEvent[]>();
+                                            topEvents.forEach((event) => {
+                                                const existing = requestGroups.get(
+                                                    event.request_id,
+                                                );
+                                                if (existing) existing.push(event);
+                                                else requestGroups.set(event.request_id, [event]);
+                                            });
+                                            requestGroups.forEach((groupEvents, key) => {
+                                                const expanded = expandedRequests.has(key);
+                                                const allEvents = [...groupEvents].sort(
+                                                    (a, b) =>
+                                                        a.created_at.localeCompare(b.created_at) ||
+                                                        a.id.localeCompare(b.id),
+                                                );
+                                                const summary =
+                                                    [...allEvents]
+                                                        .reverse()
+                                                        .find(
+                                                            (event) =>
+                                                                event.event_type ===
+                                                                "response.returned",
+                                                        ) ?? allEvents[allEvents.length - 1];
+                                                const visibleEvents = [
+                                                    { event: summary, summary: true },
+                                                    ...(expanded
+                                                        ? allEvents.map((event) => ({
+                                                              event,
+                                                              summary: false,
+                                                          }))
+                                                        : []),
+                                                ];
+                                                visibleEvents.forEach(
+                                                    ({ event: e, summary: isSummary }) => {
+                                                        const m = e.metadata as Record<
+                                                            string,
+                                                            unknown
+                                                        >;
+                                                        rows.push(
+                                                            <tr
+                                                                key={
+                                                                    isSummary
+                                                                        ? `request-${key}`
+                                                                        : e.id
+                                                                }
+                                                                className={`border-ink-800 border-b align-top ${isSummary ? requestTone(allEvents) : rowTone(e.event_type)}`}
+                                                            >
+                                                                <td
+                                                                    className={`text-fog-400 w-44 min-w-44 py-3 pr-3 font-mono text-xs whitespace-nowrap ${!isSummary ? "pl-8" : "pl-3"}`}
+                                                                >
+                                                                    <span className="block">
+                                                                        {formatDateTime(
+                                                                            e.created_at,
+                                                                        )}
+                                                                    </span>
+                                                                    {isSummary ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            aria-expanded={expanded}
+                                                                            aria-label={`${expanded ? "Collapse" : "Expand"} request ${key}`}
+                                                                            onClick={() =>
+                                                                                toggleRequest(key)
+                                                                            }
+                                                                            className="border-brand-400/40 bg-brand-500/10 text-brand-200 hover:bg-brand-500/20 focus-visible:outline-brand-400 mt-2 inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 font-sans text-xs font-semibold focus-visible:outline-2"
+                                                                        >
+                                                                            {expanded ? (
+                                                                                <ChevronDown
+                                                                                    size={16}
+                                                                                    aria-hidden="true"
+                                                                                />
+                                                                            ) : (
+                                                                                <ChevronRight
+                                                                                    size={16}
+                                                                                    aria-hidden="true"
+                                                                                />
+                                                                            )}
+                                                                            {expanded
+                                                                                ? "Hide events"
+                                                                                : `Show events (${allEvents.length})`}
+                                                                        </button>
+                                                                    ) : null}
+                                                                </td>
+                                                                <td className="text-fog-300 w-32 min-w-32 px-3 py-3 text-xs whitespace-nowrap">
+                                                                    {displayUser(e, users)}
+                                                                </td>
+                                                                <td className="text-fog-300 w-56 min-w-56 px-3 py-3 text-xs">
+                                                                    <span
+                                                                        className="block max-w-56 truncate"
+                                                                        title={displayModel(m)}
+                                                                    >
+                                                                        {displayModel(m)}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
+                                                                    {String(
+                                                                        m.thinking_level ??
+                                                                            m.reasoning_level ??
+                                                                            "—",
+                                                                    )}
+                                                                </td>
+                                                                <td className="text-fog-400 w-80 max-w-80 min-w-80 px-3 py-3 font-mono text-xs whitespace-normal">
+                                                                    <span className="block [overflow-wrap:anywhere] break-words">
+                                                                        {String(
+                                                                            m.account_name ?? "—",
+                                                                        )}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
+                                                                    <span
+                                                                        className={
+                                                                            displayOperation(m) ===
+                                                                            "Web search"
+                                                                                ? "text-brand-300"
+                                                                                : "text-fog-400"
+                                                                        }
+                                                                    >
+                                                                        {displayOperation(m)}
+                                                                    </span>
+                                                                </td>
+                                                                <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">
+                                                                    <div className="flex flex-wrap items-center gap-2">
+                                                                        {isSummary ? (
+                                                                            <span>
+                                                                                <span
+                                                                                    className="block font-mono text-xs"
+                                                                                    title={key}
+                                                                                >
+                                                                                    {key.length > 22
+                                                                                        ? `${key.slice(0, 12)}…${key.slice(-6)}`
+                                                                                        : key}
+                                                                                </span>
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span>
+                                                                                {e.event_type}
+                                                                            </span>
+                                                                        )}
+                                                                        {displayOperation(m) !==
+                                                                            "Web search" &&
+                                                                        (isSummary ||
+                                                                            e.event_type ===
+                                                                                "request.received" ||
+                                                                            [
+                                                                                "response.returned",
+                                                                                "response.completed",
+                                                                                "response.failed",
+                                                                                "response.interrupted",
+                                                                            ].includes(
+                                                                                e.event_type,
+                                                                            )) &&
+                                                                        e.archive_hot !== false &&
+                                                                        e.request_id?.startsWith(
+                                                                            "req_",
+                                                                        ) ? (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => {
+                                                                                    setCaptureSide(
+                                                                                        !isSummary &&
+                                                                                            e.event_type ===
+                                                                                                "request.received"
+                                                                                            ? "request"
+                                                                                            : "response",
+                                                                                    );
+                                                                                    setCaptureEventId(
+                                                                                        e.request_id.slice(
+                                                                                            4,
+                                                                                        ),
+                                                                                    );
+                                                                                }}
+                                                                                className="text-fog-300 hover:text-brand-200 rounded border border-current/30 px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
+                                                                            >
+                                                                                View capture
+                                                                            </button>
+                                                                        ) : null}
+                                                                    </div>
+                                                                </td>
+                                                                <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                                    {formatCompactNumber(
+                                                                        m.input_tokens,
+                                                                    )}
+                                                                </td>
+                                                                <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                                    {formatCompactNumber(
+                                                                        m.output_tokens,
+                                                                    )}
+                                                                </td>
+                                                                <td className="text-fog-300 w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                                    {m.tokens_per_second == null
+                                                                        ? "—"
+                                                                        : `${Number(m.tokens_per_second).toFixed(1)} t/s`}
+                                                                </td>
+                                                                <td className="w-32 min-w-32 px-3 py-3 font-mono text-xs">
+                                                                    <CacheReadMetric
+                                                                        cached={
+                                                                            m.cached_input_tokens
+                                                                        }
+                                                                        input={m.input_tokens}
+                                                                    />
+                                                                </td>
+                                                                <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                                    {formatCompactNumber(
+                                                                        m.cache_write_tokens,
+                                                                    )}
+                                                                </td>
+                                                                <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
+                                                                    {m.cost_usd == null
+                                                                        ? "—"
+                                                                        : `$${Number(m.cost_usd).toFixed(4)}`}
+                                                                </td>
+                                                                <td className="text-fog-300 w-24 min-w-24 px-3 py-3 whitespace-nowrap">
+                                                                    {e.status_code ?? "—"}
+                                                                </td>
+                                                            </tr>,
+                                                        );
+                                                    },
+                                                );
+                                            });
+                                            return;
                                         }
+                                        const groupEvents = topEvents;
+                                        const key = topKey;
                                         const expanded = expandedRequests.has(key);
                                         const allEvents = [...groupEvents].sort(
                                             (a, b) =>
@@ -584,21 +812,15 @@ export default function EventsPage() {
                                                     (event) =>
                                                         event.event_type === "response.returned",
                                                 ) ?? allEvents[allEvents.length - 1];
-                                        const visibleEvents =
-                                            groupBy === "request"
-                                                ? [
-                                                      { event: summary, summary: true },
-                                                      ...(expanded
-                                                          ? allEvents.map((event) => ({
-                                                                event,
-                                                                summary: false,
-                                                            }))
-                                                          : []),
-                                                  ]
-                                                : groupEvents.map((event) => ({
+                                        const visibleEvents = [
+                                            { event: summary, summary: true },
+                                            ...(expanded
+                                                ? allEvents.map((event) => ({
                                                       event,
                                                       summary: false,
-                                                  }));
+                                                  }))
+                                                : []),
+                                        ];
                                         visibleEvents.forEach(
                                             ({ event: e, summary: isSummary }) => {
                                                 const m = e.metadata as Record<string, unknown>;
@@ -608,7 +830,7 @@ export default function EventsPage() {
                                                         className={`border-ink-800 border-b align-top ${isSummary ? requestTone(allEvents) : rowTone(e.event_type)}`}
                                                     >
                                                         <td
-                                                            className={`text-fog-400 w-44 min-w-44 py-3 pr-3 font-mono text-xs whitespace-nowrap ${groupBy === "request" && !isSummary ? "pl-8" : "pl-3"}`}
+                                                            className={`text-fog-400 w-44 min-w-44 py-3 pr-3 pl-3 font-mono text-xs whitespace-nowrap`}
                                                         >
                                                             <span className="block">
                                                                 {formatDateTime(e.created_at)}
@@ -617,145 +839,39 @@ export default function EventsPage() {
                                                                 <button
                                                                     type="button"
                                                                     aria-expanded={expanded}
-                                                                    aria-label={`${expanded ? "Collapse" : "Expand"} request ${key}`}
                                                                     onClick={() =>
                                                                         toggleRequest(key)
                                                                     }
-                                                                    className="border-brand-400/40 bg-brand-500/10 text-brand-200 hover:bg-brand-500/20 focus-visible:outline-brand-400 mt-2 inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 font-sans text-xs font-semibold focus-visible:outline-2"
+                                                                    className="border-brand-400/40 bg-brand-500/10 text-brand-200 hover:bg-brand-500/20 mt-2 inline-flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-xs font-semibold"
                                                                 >
                                                                     {expanded ? (
-                                                                        <ChevronDown
-                                                                            size={16}
-                                                                            aria-hidden="true"
-                                                                        />
+                                                                        <ChevronDown size={16} />
                                                                     ) : (
-                                                                        <ChevronRight
-                                                                            size={16}
-                                                                            aria-hidden="true"
-                                                                        />
-                                                                    )}
+                                                                        <ChevronRight size={16} />
+                                                                    )}{" "}
                                                                     {expanded
                                                                         ? "Hide events"
                                                                         : `Show events (${allEvents.length})`}
                                                                 </button>
                                                             ) : null}
                                                         </td>
-                                                        <td className="text-fog-300 w-32 min-w-32 px-3 py-3 text-xs whitespace-nowrap">
-                                                            {displayUser(e, users)}
-                                                        </td>
-                                                        <td className="text-fog-300 w-56 min-w-56 px-3 py-3 text-xs">
-                                                            <span
-                                                                className="block max-w-56 truncate"
-                                                                title={displayModel(m)}
-                                                            >
-                                                                {displayModel(m)}
+                                                        <td
+                                                            colSpan={13}
+                                                            className="text-fog-300 px-3 py-3 text-xs"
+                                                        >
+                                                            <span className="text-brand-300 font-mono">
+                                                                {key}
                                                             </span>
-                                                        </td>
-                                                        <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
-                                                            {String(
-                                                                m.thinking_level ??
-                                                                    m.reasoning_level ??
-                                                                    "—",
-                                                            )}
-                                                        </td>
-                                                        <td className="text-fog-400 w-80 max-w-80 min-w-80 px-3 py-3 font-mono text-xs whitespace-normal">
-                                                            <span className="block [overflow-wrap:anywhere] break-words">
-                                                                {String(m.account_name ?? "—")}
+                                                            <span className="text-fog-500 ml-3">
+                                                                {displayUser(e, users)} ·{" "}
+                                                                {displayModel(m)} ·{" "}
+                                                                {String(
+                                                                    m.thinking_level ??
+                                                                        m.reasoning_level ??
+                                                                        "—",
+                                                                )}{" "}
+                                                                · {String(m.account_name ?? "—")}
                                                             </span>
-                                                        </td>
-                                                        <td className="text-fog-300 w-28 min-w-28 px-3 py-3 text-xs whitespace-nowrap">
-                                                            <span
-                                                                className={
-                                                                    displayOperation(m) ===
-                                                                    "Web search"
-                                                                        ? "text-brand-300"
-                                                                        : "text-fog-400"
-                                                                }
-                                                            >
-                                                                {displayOperation(m)}
-                                                            </span>
-                                                        </td>
-                                                        <td className="text-brand-300 w-64 min-w-64 px-3 py-3 font-medium whitespace-normal">
-                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                {isSummary ? (
-                                                                    <span>
-                                                                        <span
-                                                                            className="block font-mono text-xs"
-                                                                            title={key}
-                                                                        >
-                                                                            {key.length > 22
-                                                                                ? `${key.slice(0, 12)}…${key.slice(-6)}`
-                                                                                : key}
-                                                                        </span>
-                                                                    </span>
-                                                                ) : (
-                                                                    <span>{e.event_type}</span>
-                                                                )}
-                                                                {displayOperation(m) !==
-                                                                    "Web search" &&
-                                                                (isSummary ||
-                                                                    e.event_type ===
-                                                                        "request.received" ||
-                                                                    [
-                                                                        "response.returned",
-                                                                        "response.completed",
-                                                                        "response.failed",
-                                                                        "response.interrupted",
-                                                                    ].includes(e.event_type)) &&
-                                                                e.archive_hot !== false &&
-                                                                e.request_id?.startsWith("req_") ? (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => {
-                                                                            setCaptureSide(
-                                                                                !isSummary &&
-                                                                                    e.event_type ===
-                                                                                        "request.received"
-                                                                                    ? "request"
-                                                                                    : "response",
-                                                                            );
-                                                                            setCaptureEventId(
-                                                                                e.request_id.slice(
-                                                                                    4,
-                                                                                ),
-                                                                            );
-                                                                        }}
-                                                                        className="text-fog-300 hover:text-brand-200 rounded border border-current/30 px-1.5 py-0.5 text-[10px] font-medium tracking-wide uppercase"
-                                                                    >
-                                                                        View capture
-                                                                    </button>
-                                                                ) : null}
-                                                            </div>
-                                                        </td>
-                                                        <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                            {formatCompactNumber(m.input_tokens)}
-                                                        </td>
-                                                        <td className="w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                            {formatCompactNumber(m.output_tokens)}
-                                                        </td>
-                                                        <td className="text-fog-300 w-24 min-w-24 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                            {m.tokens_per_second == null
-                                                                ? "—"
-                                                                : `${Number(m.tokens_per_second).toFixed(1)} t/s`}
-                                                        </td>
-                                                        <td className="w-32 min-w-32 px-3 py-3 font-mono text-xs">
-                                                            <CacheReadMetric
-                                                                cached={m.cached_input_tokens}
-                                                                input={m.input_tokens}
-                                                            />
-                                                        </td>
-                                                        <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                            {formatCompactNumber(
-                                                                m.cache_write_tokens,
-                                                            )}
-                                                        </td>
-                                                        <td className="w-28 min-w-28 px-3 py-3 font-mono text-xs whitespace-nowrap">
-                                                            {m.cost_usd == null
-                                                                ? "—"
-                                                                : `$${Number(m.cost_usd).toFixed(4)}`}
-                                                        </td>
-                                                        <td className="text-fog-300 w-24 min-w-24 px-3 py-3 whitespace-nowrap">
-                                                            {e.status_code ?? "—"}
                                                         </td>
                                                     </tr>,
                                                 );

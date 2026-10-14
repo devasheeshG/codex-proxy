@@ -26,7 +26,7 @@ def list_events(
     user_id: Optional[uuid.UUID] = None,
     model: Optional[str] = None,
     operation: Optional[str] = None,
-    group_by: Optional[Literal["request"]] = None,
+    group_by: Optional[Literal["request", "agent_run", "conversation", "session"]] = None,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
     _: str = Depends(security.require_admin),  # noqa: B008
@@ -72,22 +72,30 @@ def list_events(
         query = query.filter(ProxyEventDb.created_at >= start)
     if end:
         query = query.filter(ProxyEventDb.created_at < end)
-    if group_by == "request":
-        # Page whole requests, not lifecycle events. A request must appear on
-        # exactly one page even when it has many retries or sub-events.
-        requests = query.with_entities(
-            ProxyEventDb.request_id,
+    if group_by:
+        # Page complete top-level groups. The UI then nests their request IDs
+        # and lifecycle events, so changing the selector never flattens the
+        # hierarchy or splits one group across pages.
+        group_column = {
+            "request": ProxyEventDb.request_id,
+            "agent_run": ProxyEventDb.codex_root_turn_id,
+            "conversation": ProxyEventDb.codex_thread_id,
+            "session": ProxyEventDb.codex_session_id,
+        }[group_by]
+        group_key = func.coalesce(group_column, ProxyEventDb.request_id)
+        groups = query.with_entities(
+            group_key.label("group_key"),
             func.max(ProxyEventDb.created_at).label("latest_at"),
-        ).group_by(ProxyEventDb.request_id)
-        total = requests.count()
-        selected = requests.order_by(desc("latest_at"), desc(ProxyEventDb.request_id)).offset(offset).limit(limit).all()
-        selected_ids = [row.request_id for row in selected]
+        ).group_by(group_key)
+        total = groups.count()
+        selected = groups.order_by(desc("latest_at"), desc("group_key")).offset(offset).limit(limit).all()
+        selected_keys = [row.group_key for row in selected]
         rows = (
             db.query(ProxyEventDb)
-            .filter(ProxyEventDb.event_type != "request.reserved", ProxyEventDb.request_id.in_(selected_ids))
+            .filter(ProxyEventDb.event_type != "request.reserved", group_key.in_(selected_keys))
             .order_by(desc(ProxyEventDb.created_at), desc(ProxyEventDb.id))
             .all()
-            if selected_ids
+            if selected_keys
             else []
         )
     else:

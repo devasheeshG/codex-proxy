@@ -219,7 +219,7 @@ export const api = {
         requestId?: string,
         model?: string,
         operation?: string,
-        groupBy?: "request",
+        groupBy?: "request" | "agent_run" | "conversation" | "session",
     ) {
         const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
         if (eventType) params.set("event_type", eventType);
