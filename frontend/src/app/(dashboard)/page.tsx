@@ -547,8 +547,6 @@ export default function OverviewPage() {
                         </div>
                     </Card>
 
-                    {activity ? <ModelTpsChart activity={activity} /> : null}
-
                     <SystemTokenFlow stats={stats} rangeLabel={range.label} />
 
                     <QuotaAverages stats={stats} />
@@ -556,6 +554,8 @@ export default function OverviewPage() {
                     {modelMix && modelMix.users.some((user) => user.total_requests > 0) ? (
                         <UserInsightsCard modelData={modelMix} thinkingData={thinkingLevelMix} />
                     ) : null}
+
+                    {activity ? <ModelTpsChart activity={activity} /> : null}
 
                     {/* Independent columns avoid stretching short cards to match data-heavy neighbours. */}
                     {stats.requests > 0 ? (

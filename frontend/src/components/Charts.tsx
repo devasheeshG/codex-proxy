@@ -575,7 +575,7 @@ export function ModelTpsChart({ activity }: { activity: ActivityResponse }) {
     const visibleCount = models.filter((model) => !hiddenModels.has(model)).length;
     return (
         <section
-            className="border-ink-700 bg-ink-900 min-w-0 overflow-hidden rounded-2xl border px-3 py-5 sm:px-5"
+            className="border-ink-700 bg-ink-850 min-w-0 overflow-hidden rounded-xl border px-3 py-5 shadow-[var(--shadow-card)] sm:px-5"
             aria-label="Model TPS over time"
         >
             <div className="mb-5 flex items-start justify-between gap-3">
