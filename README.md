@@ -21,6 +21,10 @@ credential, prompt, or production record is used.
 > control and are permitted to use this way; check the terms that apply to your
 > organization and subscription.
 
+## Dashboard throughput history
+
+The full-width **TPS over time** chart follows the selected date range, user, and model filters. It shows per-model averages of measured request TPS in hourly buckets for ranges up to two days and daily buckets for longer ranges. Missing measurements appear as gaps. Select model names in the legend to hide or show lines. The dashboard no longer includes the Top users ranking.
+
 ## Quick start
 
 The supported installation path is agent-assisted: copy the complete prompt in

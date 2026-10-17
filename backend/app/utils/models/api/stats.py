@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Shared time-range filter -----------------------------------------------------
 
@@ -175,6 +175,7 @@ class OverviewResponse(BaseModel):
 
 
 class ActivityPoint(BaseModel):
+    model_tps: dict[str, float] = Field(default_factory=dict)
     ts: str  # ISO 8601 UTC bucket start ("2026-06-21T00:00:00+00:00" for a day, "...T14:00:00+00:00" for an hour)
     requests: int
     tokens: int

@@ -334,11 +334,32 @@ def activity(
 
     by_bucket = {key(row.bucket): (int(row.tokens or 0), int(row.requests or 0)) for row in rows}
 
+    # Average only measured per-request rates; missing measurements are gaps,
+    # never zeros. Apply the exact same range/user/model scope as activity.
+    tps_rows = (
+        db.query(
+            bucket_col.label("bucket"),
+            UsageRecordDb.model,
+            func.avg(UsageRecordDb.tokens_per_second).label("average_tps"),
+        )
+        .filter(*_scope_clauses(start, end, rng.user_id, rng.model), UsageRecordDb.tokens_per_second > 0)
+        .group_by(bucket_col, UsageRecordDb.model)
+        .all()
+    )
+    tps_by_bucket = {}
+    for row in tps_rows:
+        tps_by_bucket.setdefault(key(row.bucket), {})[row.model] = round(float(row.average_tps), 2)
+
     points = []
     cursor = floor(start)
     while cursor < end:
         tokens, requests = by_bucket.get(cursor.replace(tzinfo=None), (0, 0))
-        points.append(ActivityPoint(ts=cursor.astimezone(timezone.utc).isoformat(), requests=requests, tokens=tokens))
+        points.append(ActivityPoint(
+            ts=cursor.astimezone(timezone.utc).isoformat(),
+            requests=requests,
+            tokens=tokens,
+            model_tps=tps_by_bucket.get(cursor.replace(tzinfo=None), {}),
+        ))
         cursor = cursor + unit
 
     return ActivityResponse(granularity=granularity, points=points)

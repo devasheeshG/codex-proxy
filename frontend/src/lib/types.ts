@@ -141,6 +141,7 @@ export interface ArchiveRequestDetail {
 // Analytics ------------------------------------------------------------------
 
 export interface ActivityPoint {
+    model_tps: Record<string, number>;
     ts: string; // ISO 8601 UTC bucket start
     requests: number;
     tokens: number;

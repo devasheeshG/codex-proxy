@@ -16,7 +16,6 @@ import { Cpu } from "lucide-react";
 import { api } from "@/lib/api";
 import {
     ActivityResponse,
-    ByUserResponse,
     DistributionResponse,
     HourlyResponse,
     ModelMixResponse,
@@ -48,8 +47,8 @@ import {
 } from "@/components/ui";
 import {
     DualAreaChart,
+    ModelTpsChart,
     DualSeries,
-    RankedBars,
     STACK_COLORS,
     StackedBarChart,
     StackSeries,
@@ -104,7 +103,6 @@ export default function OverviewPage() {
     const [stats, setStats] = useState<OverviewStats | null>(null);
     const [activity, setActivity] = useState<ActivityResponse | null>(null);
     const [hourly, setHourly] = useState<HourlyResponse | null>(null);
-    const [byUser, setByUser] = useState<ByUserResponse | null>(null);
     const [distro, setDistro] = useState<DistributionResponse | null>(null);
     const [modelMix, setModelMix] = useState<ModelMixResponse | null>(null);
     const [thinkingLevelMix, setThinkingLevelMix] = useState<ThinkingLevelMixResponse | null>(null);
@@ -159,17 +157,15 @@ export default function OverviewPage() {
         setThinkingLevelMix(null);
         const u = uid ?? undefined;
         try {
-            const [s, a, h, bu] = await Promise.all([
+            const [s, a, h] = await Promise.all([
                 api.overview(r, u, model),
                 api.activity(r, u, model),
                 api.hourly(r, u, model),
-                api.byUser(r, u, model),
             ]);
             if (requestId !== analyticsRequestId.current) return;
             setStats(s);
             setActivity(a);
             setHourly(h);
-            setByUser(bu);
             const [d, m, t] = await Promise.all([
                 api.distributions(r, u, model).catch(() => null),
                 api.modelMix(r, u, model).catch(() => null),
@@ -374,17 +370,8 @@ export default function OverviewPage() {
         .sort((a, b) => a.sortKey - b.sortKey)
         .map(({ row }) => row);
 
-    const topUsers = (byUser?.users ?? [])
-        .filter((u) => u.tokens > 0)
-        .slice(0, 6)
-        .map((u) => ({
-            label: u.user_name ?? "—",
-            value: u.tokens,
-            sublabel: `${formatNumber(u.requests)} req`,
-        }));
-
     return (
-        <div className="space-y-5">
+        <div className="min-w-0 space-y-5">
             {/* Header */}
             <header className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -560,6 +547,8 @@ export default function OverviewPage() {
                         </div>
                     </Card>
 
+                    {activity ? <ModelTpsChart activity={activity} /> : null}
+
                     <SystemTokenFlow stats={stats} rangeLabel={range.label} />
 
                     <QuotaAverages stats={stats} />
@@ -570,13 +559,12 @@ export default function OverviewPage() {
 
                     {/* Independent columns avoid stretching short cards to match data-heavy neighbours. */}
                     {stats.requests > 0 ? (
-                        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
-                            <div className="space-y-4">
+                        <div className="grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-2">
+                            <div className="min-w-0 space-y-4">
                                 {modelMix &&
                                 modelMix.users.some((user) => user.total_requests > 0) ? (
                                     <>
                                         <RequestsByModelCard data={modelMix} />
-                                        <AverageTpsByModelCard data={modelMix} />
                                     </>
                                 ) : null}
                                 <PeakHoursCard
@@ -586,11 +574,10 @@ export default function OverviewPage() {
                                     timezone={tz}
                                 />
                             </div>
-                            <div className="space-y-4">
+                            <div className="min-w-0 space-y-4">
                                 {distro && distro.total_requests > 0 ? (
                                     <DistributionCard distro={distro} />
                                 ) : null}
-                                <TopUsersCard data={topUsers} tone="green" />
                             </div>
                         </div>
                     ) : null}
@@ -997,34 +984,6 @@ function PeakHoursCard({
     );
 }
 
-function TopUsersCard({
-    data,
-    tone,
-}: {
-    data: Array<{ label: string; value: number; sublabel: string }>;
-    tone: "green";
-}) {
-    return (
-        <Card className="p-5">
-            <div className="flex items-start justify-between gap-3">
-                <div>
-                    <h3 className="text-fog-100 text-sm font-semibold">Top users</h3>
-                    <p className="text-fog-400 mt-0.5 text-xs">Six highest token consumers</p>
-                </div>
-            </div>
-            <div className="mt-4">
-                {data.length > 0 ? (
-                    <RankedBars data={data} tone={tone} format={(value) => formatTokens(value)} />
-                ) : (
-                    <div className="text-fog-400 flex h-44 items-center justify-center text-sm">
-                        No usage in this range.
-                    </div>
-                )}
-            </div>
-        </Card>
-    );
-}
-
 const MODEL_COLORS = [
     "var(--color-chart-1)",
     "var(--color-chart-2)",
@@ -1384,62 +1343,6 @@ function RequestsByModelCard({ data }: { data: ModelMixResponse }) {
                     );
                 })}
             </div>
-        </Card>
-    );
-}
-
-function AverageTpsByModelCard({ data }: { data: ModelMixResponse }) {
-    const byModel: Record<string, { requests: number; measuredRequests: number; tps: number }> = {};
-    for (const user of data.users) {
-        for (const model of user.models) {
-            const entry = (byModel[model.model] ??= { requests: 0, measuredRequests: 0, tps: 0 });
-            entry.requests += model.requests;
-            if (model.average_tps != null && model.average_tps > 0) {
-                entry.measuredRequests += model.requests;
-                entry.tps += model.average_tps * model.requests;
-            }
-        }
-    }
-    const rows = Object.entries(byModel)
-        .map(([model, value]) => ({ model, requests: value.requests, tps: value.measuredRequests ? value.tps / value.measuredRequests : null }))
-        .filter((row) => row.tps != null)
-        .sort((a, b) => (b.tps ?? 0) - (a.tps ?? 0));
-    const maxTps = rows[0]?.tps ?? 1;
-    const allModels = Array.from(new Set(data.users.flatMap((user) => user.models.map((model) => model.model))));
-
-    return (
-        <Card className="p-5">
-            <h3 className="text-fog-100 text-sm font-semibold">Average TPS by model</h3>
-            <p className="text-fog-400 mt-0.5 mb-4 text-xs">Measured output tokens per second</p>
-            {rows.length === 0 ? (
-                <p className="text-fog-400 text-xs">No TPS measurements in this range.</p>
-            ) : (
-                <div className="space-y-2.5">
-                    {rows.map((row) => {
-                        const index = allModels.indexOf(row.model);
-                        return (
-                            <div key={row.model} className="flex items-center gap-2.5">
-                                <span className="text-fog-200 w-28 shrink-0 truncate font-mono text-xs">
-                                    {shortModel(row.model)}
-                                </span>
-                                <div className="bg-ink-800 h-5 flex-1 overflow-hidden rounded">
-                                    <div
-                                        className="h-full rounded"
-                                        style={{
-                                            width: `${Math.max(((row.tps ?? 0) / maxTps) * 100, 2)}%`,
-                                            backgroundColor: modelColor(index),
-                                            opacity: 0.85,
-                                        }}
-                                    />
-                                </div>
-                                <span className="text-fog-200 w-20 text-right font-mono text-xs tabular-nums">
-                                    {formatNumber(row.tps ?? 0)} t/s
-                                </span>
-                            </div>
-                        );
-                    })}
-                </div>
-            )}
         </Card>
     );
 }
