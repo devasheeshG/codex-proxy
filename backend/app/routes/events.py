@@ -86,9 +86,10 @@ def list_events(
         groups = query.with_entities(
             group_key.label("group_key"),
             func.max(ProxyEventDb.created_at).label("latest_at"),
+            func.count().over().label("group_total"),
         ).group_by(group_key)
-        total = groups.count()
         selected = groups.order_by(desc("latest_at"), desc("group_key")).offset(offset).limit(limit).all()
+        total = int(selected[0].group_total) if selected else groups.count()
         selected_keys = [row.group_key for row in selected]
         rows = (
             db.query(ProxyEventDb)

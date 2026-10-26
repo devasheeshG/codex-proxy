@@ -23,7 +23,9 @@ credential, prompt, or production record is used.
 
 ## Dashboard throughput history
 
-The full-width **TPS over time** chart follows the selected date range, user, and model filters. It shows per-model averages of measured request TPS in hourly buckets for ranges up to two days and daily buckets for longer ranges. Missing measurements appear as gaps. Select model names in the legend to hide or show lines. The dashboard no longer includes the Top users ranking.
+The full-width **Request analytics** panel defaults to TPS and also includes requests by model, requests by user, and input/output token distributions over time. Every view follows the selected date range, user, and model filters. Ranges up to two days use hourly buckets; longer ranges use daily buckets. Token-distribution plots show the per-request median and P10–P90 band, excluding missing usage; missing TPS and token measurements appear as gaps. Model dropdowns list only models with activity in the selected range and user scope. **User analytics** defaults to Models, and **Peak requests** uses the full dashboard width. The dashboard no longer includes the Top users ranking.
+
+The home page fetches analytics through one read-only `/api/v1/stats/dashboard` response. Independent calculations use a bounded worker pool with separate database sessions; the hidden legacy usage table no longer fetches data. Events combine lookup lists in one request and count paginated parent groups in the grouped selection query. These changes do not alter inference or account routing.
 
 ## Quick start
 

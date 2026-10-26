@@ -153,6 +153,17 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 // --- typed endpoints -------------------------------------------------------
 
 export const api = {
+    dashboard(range?: TimeRange, userId?: string, model?: string) {
+        return request<import("@/lib/types").DashboardAnalytics>(
+            `/v1/stats/dashboard?${filterParams(range, userId, model).slice(1)}`,
+        );
+    },
+    analyticsLookups(range?: TimeRange, userId?: string) {
+        return request<{ users: UserLookup[]; models: string[] }>(
+            `/v1/lookups?${filterParams(range, userId).slice(1)}`,
+        );
+    },
+
     // Auth
     login(username: string, password: string) {
         return request<LoginResponse>("/v1/auth/login", {

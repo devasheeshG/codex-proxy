@@ -47,12 +47,12 @@ import {
 } from "@/components/ui";
 import {
     DualAreaChart,
-    ModelTpsChart,
     DualSeries,
     STACK_COLORS,
     StackedBarChart,
     StackSeries,
 } from "@/components/Charts";
+import { RequestAnalyticsCard } from "@/components/RequestAnalyticsCard";
 import { RangePicker } from "@/components/RangePicker";
 import { UserFilter } from "@/components/UserFilter";
 import { EventTypeFilter } from "@/components/EventTypeFilter";
@@ -82,21 +82,22 @@ export default function OverviewPage() {
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const queryString = searchParams.toString();
+    const defaultRange = useMemo(thisMonth, []);
     const query = useMemo(() => {
         const params = new URLSearchParams(queryString);
-        const fallback = thisMonth();
+        const fallback = defaultRange;
         const rangeLabel = params.get("range");
         return {
             range: {
                 start:
                     params.get("start") || (rangeLabel === "All time" ? undefined : fallback.start),
-                end: params.get("end") || fallback.end,
+                end: params.get("end") || (rangeLabel === "All time" ? fallback.end : undefined),
                 label: rangeLabel || fallback.label,
             } satisfies TimeRange,
             userId: params.get("user") || null,
             model: params.get("model") || "",
         };
-    }, [queryString]);
+    }, [queryString, defaultRange]);
     const [queryHydrated, setQueryHydrated] = useState(false);
     const [range, setRange] = useState<TimeRange>(thisMonth);
 
@@ -133,20 +134,17 @@ export default function OverviewPage() {
     );
 
     useEffect(() => {
-        setRange(query.range);
+        setRange((current) =>
+            current.start === query.range.start &&
+            current.end === query.range.end &&
+            current.label === query.range.label
+                ? current
+                : query.range,
+        );
         setFilterUserId(query.userId);
         setFilterModel(query.model);
         setQueryHydrated(true);
     }, [query]);
-
-    useEffect(() => {
-        api.analyticsUsers()
-            .then(setAllUsers)
-            .catch(() => {});
-        api.analyticsModels()
-            .then(setModelOptions)
-            .catch(() => {});
-    }, []);
 
     const loadAnalytics = useCallback(async (r: TimeRange, uid?: string | null, model?: string) => {
         const requestId = ++analyticsRequestId.current;
@@ -157,24 +155,16 @@ export default function OverviewPage() {
         setThinkingLevelMix(null);
         const u = uid ?? undefined;
         try {
-            const [s, a, h] = await Promise.all([
-                api.overview(r, u, model),
-                api.activity(r, u, model),
-                api.hourly(r, u, model),
-            ]);
+            const data = await api.dashboard(r, u, model);
             if (requestId !== analyticsRequestId.current) return;
-            setStats(s);
-            setActivity(a);
-            setHourly(h);
-            const [d, m, t] = await Promise.all([
-                api.distributions(r, u, model).catch(() => null),
-                api.modelMix(r, u, model).catch(() => null),
-                api.thinkingLevelMix(r, u, model).catch(() => null),
-            ]);
-            if (requestId !== analyticsRequestId.current) return;
-            if (d) setDistro(d);
-            if (m) setModelMix(m);
-            if (t) setThinkingLevelMix(t);
+            setStats(data.overview);
+            setActivity(data.activity);
+            setHourly(data.hourly);
+            setDistro(data.distributions);
+            setModelMix(data.model_mix);
+            setThinkingLevelMix(data.thinking_level_mix);
+            setAllUsers(data.lookups.users);
+            setModelOptions(data.lookups.models);
         } catch (err) {
             if (requestId === analyticsRequestId.current) {
                 setAnalyticsError(err instanceof Error ? err.message : "Failed to load analytics.");
@@ -213,15 +203,12 @@ export default function OverviewPage() {
     const refreshAll = useCallback(async () => {
         setRefreshing(true);
         try {
-            await Promise.all([
-                loadAnalytics(range, filterUserId, filterModel || undefined),
-                loadUsage(0, range, filterUserId, filterModel || undefined),
-            ]);
+            await loadAnalytics(range, filterUserId, filterModel || undefined);
             setOffset(0);
         } finally {
             setRefreshing(false);
         }
-    }, [filterModel, filterUserId, loadAnalytics, loadUsage, range]);
+    }, [filterModel, filterUserId, loadAnalytics, range]);
 
     // Reset to the first page and reload everything when the range or user filter changes.
     useEffect(() => {
@@ -229,11 +216,6 @@ export default function OverviewPage() {
         setOffset(0);
         void loadAnalytics(range, filterUserId, filterModel || undefined);
     }, [range, filterModel, filterUserId, loadAnalytics, queryHydrated]);
-
-    useEffect(() => {
-        if (!queryHydrated) return;
-        void loadUsage(offset, range, filterUserId, filterModel || undefined);
-    }, [offset, range, filterModel, filterUserId, loadUsage, queryHydrated]);
 
     // --- auto-refresh --------------------------------------------------------
     const [autoRefresh, setAutoRefresh] = useState(false);
@@ -343,7 +325,7 @@ export default function OverviewPage() {
         hourlyStackSeries.push({
             key: "other-users",
             label: "Other users",
-            color: "var(--color-fog-500)",
+            color: "var(--color-fog-400)",
         });
     }
     const tz = localTzAbbr();
@@ -454,6 +436,7 @@ export default function OverviewPage() {
                         label="Model"
                         allLabel="All models"
                         idPrefix="overview-model-options"
+                        showArrow={false}
                         compact
                         icon={Cpu}
                     />
@@ -555,7 +538,16 @@ export default function OverviewPage() {
                         <UserInsightsCard modelData={modelMix} thinkingData={thinkingLevelMix} />
                     ) : null}
 
-                    {activity ? <ModelTpsChart activity={activity} /> : null}
+                    {activity ? <RequestAnalyticsCard activity={activity} /> : null}
+
+                    {stats.requests > 0 ? (
+                        <PeakHoursCard
+                            hourly={hourly}
+                            data={hourlyStackData}
+                            series={hourlyStackSeries}
+                            timezone={tz}
+                        />
+                    ) : null}
 
                     {/* Independent columns avoid stretching short cards to match data-heavy neighbours. */}
                     {stats.requests > 0 ? (
@@ -567,12 +559,6 @@ export default function OverviewPage() {
                                         <RequestsByModelCard data={modelMix} />
                                     </>
                                 ) : null}
-                                <PeakHoursCard
-                                    hourly={hourly}
-                                    data={hourlyStackData}
-                                    series={hourlyStackSeries}
-                                    timezone={tz}
-                                />
                             </div>
                             <div className="min-w-0 space-y-4">
                                 {distro && distro.total_requests > 0 ? (
@@ -939,10 +925,8 @@ function PeakHoursCard({
         <Card className="p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <h3 className="text-fog-100 text-sm font-semibold">Peak hours</h3>
-                    <p className="text-fog-400 mt-0.5 text-xs">
-                        Requests by hour ({timezone}); five busiest users plus everyone else
-                    </p>
+                    <h3 className="text-fog-100 text-sm font-semibold">Peak requests</h3>
+                    <p className="text-fog-400 mt-0.5 text-xs">Requests by hour · {timezone}</p>
                 </div>
             </div>
             <div className="mt-3">
@@ -953,7 +937,7 @@ function PeakHoursCard({
                             series={series}
                             axisInterval={2}
                             format={(value) => `${formatNumber(value)} req`}
-                            height={200}
+                            height={240}
                         />
                     ) : (
                         <div className="text-fog-400 flex h-44 items-center justify-center text-sm">
@@ -1012,7 +996,7 @@ function UserInsightsCard({
     modelData: ModelMixResponse;
     thinkingData: ThinkingLevelMixResponse | null;
 }) {
-    const [view, setView] = useState<UserInsightView>("tokens");
+    const [view, setView] = useState<UserInsightView>("models");
     const users = modelData.users.filter((user) => user.total_requests > 0);
     const allModels = Array.from(
         new Set(users.flatMap((user) => user.models.map((model) => model.model))),
@@ -1151,11 +1135,6 @@ function UserInsightsCard({
                     </div>
                 )}
             </div>
-            {users.length > 5 ? (
-                <div className="border-ink-700 text-fog-500 border-t px-5 py-2 text-center text-[10px] tracking-wide uppercase">
-                    Scroll inside this panel to inspect all {formatNumber(users.length)} users
-                </div>
-            ) : null}
         </Card>
     );
 }

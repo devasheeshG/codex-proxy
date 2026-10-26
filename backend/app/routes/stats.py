@@ -5,6 +5,7 @@
 #              when a bound is omitted. Admin-only.
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
@@ -320,49 +321,74 @@ def activity(
             return dt.replace(minute=0, second=0, microsecond=0)
         return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    bucket_col = func.date_trunc("hour" if by_hour else "day", UsageRecordDb.created_at)
+    bucket_col = func.date_trunc(granularity, UsageRecordDb.created_at)
+    scope = _scope_clauses(start, end, rng.user_id, rng.model)
+    measured = [UsageRecordDb.input_tokens + UsageRecordDb.output_tokens > 0]
+    # Compute all three percentiles together: one ordered-set transition per
+    # token column, alongside volume totals in the same bucket scan.
     rows = (
-        db.query(bucket_col.label("bucket"), _tokens_sum().label("tokens"), func.count(UsageRecordDb.id).label("requests"))
-        .filter(*_scope_clauses(start, end, rng.user_id, rng.model))
-        .group_by(bucket_col)
-        .all()
-    )
-
-    def key(dt: datetime) -> datetime:
-        # Normalise to a naive-UTC bucket key so DB rows (which may be tz-naive) and our walk line up.
-        return floor(dt).replace(tzinfo=None)
-
-    by_bucket = {key(row.bucket): (int(row.tokens or 0), int(row.requests or 0)) for row in rows}
-
-    # Average only measured per-request rates; missing measurements are gaps,
-    # never zeros. Apply the exact same range/user/model scope as activity.
-    tps_rows = (
         db.query(
-            bucket_col.label("bucket"),
-            UsageRecordDb.model,
-            func.avg(UsageRecordDb.tokens_per_second).label("average_tps"),
-        )
-        .filter(*_scope_clauses(start, end, rng.user_id, rng.model), UsageRecordDb.tokens_per_second > 0)
-        .group_by(bucket_col, UsageRecordDb.model)
-        .all()
+            bucket_col.label("bucket"), _tokens_sum().label("tokens"),
+            func.count(UsageRecordDb.id).label("requests"),
+            func.count(UsageRecordDb.id).filter(*measured).label("samples"),
+            func.percentile_cont([0.1, 0.5, 0.9]).within_group(UsageRecordDb.input_tokens).filter(*measured).label("input_quantiles"),
+            func.percentile_cont([0.1, 0.5, 0.9]).within_group(UsageRecordDb.output_tokens).filter(*measured).label("output_quantiles"),
+        ).filter(*scope).group_by(bucket_col).all()
     )
-    tps_by_bucket = {}
-    for row in tps_rows:
-        tps_by_bucket.setdefault(key(row.bucket), {})[row.model] = round(float(row.average_tps), 2)
+    # Counts and TPS share the same model/bucket grouping. Missing TPS stays
+    # null while request counts still include requests without measured usage.
+    model_rows = (
+        db.query(bucket_col.label("bucket"), UsageRecordDb.model,
+                 func.count(UsageRecordDb.id).label("requests"),
+                 func.avg(UsageRecordDb.tokens_per_second).filter(UsageRecordDb.tokens_per_second > 0).label("average_tps"))
+        .filter(*scope).group_by(bucket_col, UsageRecordDb.model).all()
+    )
+    user_rows = (
+        db.query(bucket_col.label("bucket"), UsageRecordDb.user_id, UserDb.name,
+                 func.count(UsageRecordDb.id).label("requests"))
+        .outerjoin(UserDb, UsageRecordDb.user_id == UserDb.id)
+        .filter(*scope).group_by(bucket_col, UsageRecordDb.user_id, UserDb.name).all()
+    )
+
+    def key(value: datetime) -> datetime:
+        return floor(value).replace(tzinfo=None)
+
+    by_bucket = {key(row.bucket): row for row in rows}
+    model_counts, tps_by_bucket = {}, {}
+    for row in model_rows:
+        model_counts.setdefault(key(row.bucket), {})[row.model] = int(row.requests)
+        if row.average_tps is not None:
+            tps_by_bucket.setdefault(key(row.bucket), {})[row.model] = round(float(row.average_tps), 2)
+    user_counts, user_names = {}, {}
+    for row in user_rows:
+        uid = str(row.user_id)
+        user_counts.setdefault(key(row.bucket), {})[uid] = int(row.requests)
+        user_names[uid] = row.name or "Deleted user"
+
+    def distribution_values(row, side):
+        if row is None or not row.samples:
+            return None
+        quantiles = getattr(row, f"{side}_quantiles")
+        return {"samples": int(row.samples), "p10": float(quantiles[0]),
+                "median": float(quantiles[1]), "p90": float(quantiles[2])}
 
     points = []
     cursor = floor(start)
     while cursor < end:
-        tokens, requests = by_bucket.get(cursor.replace(tzinfo=None), (0, 0))
+        bucket_key = cursor.replace(tzinfo=None)
+        row = by_bucket.get(bucket_key)
         points.append(ActivityPoint(
             ts=cursor.astimezone(timezone.utc).isoformat(),
-            requests=requests,
-            tokens=tokens,
-            model_tps=tps_by_bucket.get(cursor.replace(tzinfo=None), {}),
+            requests=int(row.requests) if row is not None else 0,
+            tokens=int(row.tokens or 0) if row is not None else 0,
+            model_tps=tps_by_bucket.get(bucket_key, {}),
+            requests_by_model=model_counts.get(bucket_key, {}),
+            requests_by_user=user_counts.get(bucket_key, {}),
+            input_distribution=distribution_values(row, "input"),
+            output_distribution=distribution_values(row, "output"),
         ))
-        cursor = cursor + unit
-
-    return ActivityResponse(granularity=granularity, points=points)
+        cursor += unit
+    return ActivityResponse(granularity=granularity, points=points, user_names=user_names)
 
 
 @router.get(
@@ -661,3 +687,42 @@ def thinking_level_mix(
         key=lambda user: (-user.total_requests, (user.user_name or "").lower()),
     )
     return ThinkingLevelMixResponse(users=users)
+
+
+# Bound analytics concurrency per worker. Each read gets its own SQLAlchemy
+# session; inference credentials, routing state, and write paths are untouched.
+_dashboard_reads = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dashboard-read")
+
+
+def _dashboard_read(compute, rng, principal):
+    from app.utils.postgres.base import SessionFactory
+    with SessionFactory() as session:
+        return compute(rng=rng, _=principal, db=session)
+
+
+@router.get("/dashboard")
+def dashboard_analytics(
+    rng: TimeRange = Depends(TimeRange.get_request),
+    _: str = Depends(security.require_admin),
+) -> dict:
+    """One round trip with bounded, independent, read-only analytics work."""
+    from app.routes.lookups import analytics_lookups
+
+    computations = {
+        "overview": overview, "activity": activity, "hourly": hourly,
+        "lookups": analytics_lookups, "distributions": distributions,
+        "model_mix": model_mix, "thinking_level_mix": thinking_level_mix,
+    }
+    futures = {name: _dashboard_reads.submit(_dashboard_read, compute, rng, _)
+               for name, compute in computations.items()}
+    result = {}
+    for name, future in futures.items():
+        try:
+            result[name] = future.result()
+        except Exception:
+            if name in {"overview", "activity", "hourly", "lookups"}:
+                raise
+            # Preserve the prior optional-panel behavior.
+            logger.exception("Optional dashboard analytics unavailable: %s", name)
+            result[name] = None
+    return result

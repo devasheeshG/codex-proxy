@@ -140,7 +140,18 @@ export interface ArchiveRequestDetail {
 
 // Analytics ------------------------------------------------------------------
 
+export interface TokenDistributionPoint {
+    samples: number;
+    p10: number;
+    median: number;
+    p90: number;
+}
+
 export interface ActivityPoint {
+    requests_by_model: Record<string, number>;
+    requests_by_user: Record<string, number>;
+    input_distribution: TokenDistributionPoint | null;
+    output_distribution: TokenDistributionPoint | null;
     model_tps: Record<string, number>;
     ts: string; // ISO 8601 UTC bucket start
     requests: number;
@@ -148,6 +159,7 @@ export interface ActivityPoint {
 }
 
 export interface ActivityResponse {
+    user_names: Record<string, string>;
     granularity: "hour" | "day";
     points: ActivityPoint[];
 }
@@ -478,4 +490,14 @@ export interface ApiKeyCreated {
     api_key: ApiKey;
     // Plaintext secret — shown exactly once.
     secret: string;
+}
+
+export interface DashboardAnalytics {
+    overview: OverviewStats;
+    activity: ActivityResponse;
+    hourly: HourlyResponse;
+    distributions: DistributionResponse | null;
+    model_mix: ModelMixResponse | null;
+    thinking_level_mix: ThinkingLevelMixResponse | null;
+    lookups: { users: UserLookup[]; models: string[] };
 }
