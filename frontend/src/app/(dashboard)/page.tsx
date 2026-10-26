@@ -1042,9 +1042,6 @@ function UserInsightsCard({
                     <div className="text-fog-400 text-xs font-medium tracking-wider uppercase">
                         User analytics
                     </div>
-                    <p className="text-fog-300 mt-1 text-sm">
-                        Compare every active user without extending the page.
-                    </p>
                     <div className="text-fog-500 mt-1 font-mono text-[11px]">
                         {formatNumber(users.length)} active users
                     </div>
