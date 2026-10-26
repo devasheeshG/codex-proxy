@@ -2,9 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import {
-    Area,
     CartesianGrid,
-    ComposedChart,
     Line,
     LineChart,
     ResponsiveContainer,
@@ -14,14 +12,14 @@ import {
 } from "recharts";
 import { ActivityResponse } from "@/lib/types";
 import { formatCompactNumber } from "@/lib/format";
+import { groupRequestUsers, OTHERS_ID } from "@/lib/requestAnalytics";
 import { STACK_COLORS } from "@/components/Charts";
 
-type View = "tps" | "models" | "users" | "tokens";
+type View = "tps" | "models" | "users";
 const VIEWS: { value: View; label: string }[] = [
     { value: "tps", label: "TPS" },
     { value: "models", label: "Requests by model" },
     { value: "users", label: "Requests by user" },
-    { value: "tokens", label: "Token distributions" },
 ];
 const AXIS = "var(--color-chart-axis)";
 const GRID = "var(--color-chart-grid)";
@@ -55,14 +53,18 @@ export function RequestAnalyticsCard({ activity }: { activity: ActivityResponse 
     const [hidden, setHidden] = useState<Set<string>>(new Set());
     const id = useId();
     const hourly = activity.granularity === "hour";
+    const userBuckets = useMemo(
+        () => groupRequestUsers(activity.points.map((point) => point.requests_by_user ?? {})),
+        [activity],
+    );
     const series = useMemo(() => {
         const totals = new Map<string, number>();
-        for (const point of activity.points) {
+        for (const [index, point] of activity.points.entries()) {
             const values =
                 view === "tps"
                     ? point.model_tps
                     : view === "users"
-                      ? point.requests_by_user
+                      ? userBuckets[index]
                       : point.requests_by_model;
             for (const [key, value] of Object.entries(values ?? {}))
                 totals.set(key, (totals.get(key) ?? 0) + value);
@@ -85,18 +87,26 @@ export function RequestAnalyticsCard({ activity }: { activity: ActivityResponse 
             .map((key, i) => ({
                 id: key,
                 key: `series${i}`,
-                label: view === "users" ? (activity.user_names?.[key] ?? "Deleted user") : key,
-                color: colorFor(colorKeys.indexOf(key)),
+                label:
+                    view === "users"
+                        ? key === OTHERS_ID
+                            ? "Others"
+                            : (activity.user_names?.[key] ?? "Deleted user")
+                        : key,
+                color:
+                    view === "users" && key === OTHERS_ID
+                        ? "var(--color-fog-400)"
+                        : colorFor(colorKeys.indexOf(key)),
             }));
-    }, [activity, view]);
+    }, [activity, view, userBuckets]);
     const visible = series.filter((s) => !hidden.has(`${view}:${s.id}`));
     const effectiveHidden = visible.length ? hidden : new Set<string>();
-    const data = activity.points.map((point) => {
+    const data = activity.points.map((point, index) => {
         const values =
             view === "tps"
                 ? point.model_tps
                 : view === "users"
-                  ? point.requests_by_user
+                  ? userBuckets[index]
                   : point.requests_by_model;
         return {
             ...dates(point.ts, hourly),
@@ -105,12 +115,6 @@ export function RequestAnalyticsCard({ activity }: { activity: ActivityResponse 
             ),
         };
     });
-    const description =
-        view === "tps"
-            ? "Average output tokens per second"
-            : view === "tokens"
-              ? "Tokens per request · median and middle 80%"
-              : "Requests over time";
     return (
         <section
             aria-label="Request analytics"
@@ -119,14 +123,11 @@ export function RequestAnalyticsCard({ activity }: { activity: ActivityResponse 
             <div className="flex flex-col gap-4 p-4 sm:p-5 xl:flex-row xl:items-center xl:justify-between">
                 <div className="min-w-0">
                     <h3 className="text-fog-100 text-sm font-semibold">Request analytics</h3>
-                    <p className="text-fog-400 mt-1 text-xs">
-                        {hourly ? "Hourly" : "Daily"} · {description}
-                    </p>
                 </div>
                 <div
                     role="tablist"
                     aria-label="Request analytics view"
-                    className="border-ink-700 bg-ink-900 grid grid-cols-2 gap-1 rounded-lg border p-1 xl:grid-cols-4"
+                    className="border-ink-700 bg-ink-900 grid grid-cols-3 gap-1 rounded-lg border p-1 xl:grid-cols-3"
                 >
                     {VIEWS.map((tab) => (
                         <button
@@ -168,12 +169,7 @@ export function RequestAnalyticsCard({ activity }: { activity: ActivityResponse 
                 aria-labelledby={`${id}-${view}`}
                 className="border-ink-700 min-w-0 border-t px-3 py-5 sm:px-5"
             >
-                {view === "tokens" ? (
-                    <div className="grid min-w-0 grid-cols-1 gap-7 lg:grid-cols-2">
-                        <TokenHistory activity={activity} side="input" />
-                        <TokenHistory activity={activity} side="output" />
-                    </div>
-                ) : series.length ? (
+                {series.length ? (
                     <>
                         <div
                             className="mb-5 flex max-h-28 flex-wrap gap-x-4 gap-y-1 overflow-y-auto"
@@ -302,119 +298,5 @@ export function RequestAnalyticsCard({ activity }: { activity: ActivityResponse 
                 )}
             </div>
         </section>
-    );
-}
-
-function TokenHistory({
-    activity,
-    side,
-}: {
-    activity: ActivityResponse;
-    side: "input" | "output";
-}) {
-    const color = side === "input" ? STACK_COLORS[0] : STACK_COLORS[1];
-    const data = activity.points.map((point) => {
-        const stats = side === "input" ? point.input_distribution : point.output_distribution;
-        return {
-            ...dates(point.ts, activity.granularity === "hour"),
-            median: stats?.median ?? null,
-            band: stats ? [stats.p10, stats.p90] : null,
-            stats,
-        };
-    });
-    const hasData = data.some((point) => point.stats != null);
-    return (
-        <div className="min-w-0" aria-label={`${side} tokens over time`}>
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-                <h4 className="text-fog-200 text-xs font-medium">
-                    {side === "input" ? "Input" : "Output"} tokens per request
-                </h4>
-                <span className="text-fog-400 text-[11px]">Median · P10–P90</span>
-            </div>
-            {hasData ? (
-                <div className="h-[250px] w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart
-                            data={data}
-                            margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
-                            accessibilityLayer
-                        >
-                            <CartesianGrid stroke={GRID} strokeDasharray="3 5" vertical={false} />
-                            <XAxis
-                                dataKey="axis"
-                                stroke={AXIS}
-                                tickLine={false}
-                                axisLine={false}
-                                minTickGap={32}
-                                tick={{ fontSize: 11 }}
-                                dy={8}
-                            />
-                            <YAxis
-                                stroke={AXIS}
-                                tickLine={false}
-                                axisLine={false}
-                                tick={{ fontSize: 11 }}
-                                width={44}
-                                domain={[0, "auto"]}
-                                tickFormatter={(value: number) =>
-                                    String(formatCompactNumber(value))
-                                }
-                            />
-                            <Tooltip
-                                content={({ active, payload }) => {
-                                    const point = payload?.[0]?.payload as
-                                        | (typeof data)[number]
-                                        | undefined;
-                                    if (!active || !point?.stats) return null;
-                                    return (
-                                        <div className="border-ink-600 bg-ink-950 text-fog-200 rounded-xl border p-3 text-xs shadow-xl">
-                                            <p className="text-fog-400 mb-2">{point.label}</p>
-                                            <div>
-                                                Median:{" "}
-                                                <strong>
-                                                    {formatCompactNumber(point.stats.median)}
-                                                </strong>
-                                            </div>
-                                            <div>
-                                                Middle 80%: {formatCompactNumber(point.stats.p10)}–
-                                                {formatCompactNumber(point.stats.p90)}
-                                            </div>
-                                            <div className="text-fog-400 mt-1">
-                                                {point.stats.samples.toLocaleString()} measured
-                                                requests
-                                            </div>
-                                        </div>
-                                    );
-                                }}
-                            />
-                            <Area
-                                dataKey="band"
-                                type="linear"
-                                stroke="none"
-                                fill={color}
-                                fillOpacity={0.16}
-                                connectNulls={false}
-                                isAnimationActive={false}
-                                activeDot={false}
-                            />
-                            <Line
-                                dataKey="median"
-                                type="linear"
-                                stroke={color}
-                                strokeWidth={2.4}
-                                dot={{ r: 2, fill: color, strokeWidth: 0 }}
-                                activeDot={{ r: 4, fill: color }}
-                                connectNulls={false}
-                                isAnimationActive={false}
-                            />
-                        </ComposedChart>
-                    </ResponsiveContainer>
-                </div>
-            ) : (
-                <div className="text-fog-400 flex h-[250px] items-center justify-center text-xs">
-                    No measured token usage in this range.
-                </div>
-            )}
-        </div>
     );
 }
