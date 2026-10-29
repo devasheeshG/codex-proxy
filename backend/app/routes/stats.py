@@ -180,6 +180,16 @@ def overview(
         return min(resets, default=None)
 
     five_hour_average_pct = average_window_pct("five_hour_used_pct")
+    # A full weekly window makes the account unavailable regardless of its
+    # current five-hour percentage. Do not count that stale five-hour capacity
+    # in the pool average shown to operators.
+    five_hour_accounts = [account for account in active_accounts if account.weekly_used_pct is None or account.weekly_used_pct < 1.0]
+    five_hour_values = [
+        getattr(account, "five_hour_used_pct" if "five_hour_used_pct" in dir(account) else "session_used_pct")
+        for account in five_hour_accounts
+        if getattr(account, "five_hour_used_pct" if "five_hour_used_pct" in dir(account) else "session_used_pct") is not None
+    ]
+    five_hour_average_pct = round(sum(five_hour_values) / len(five_hour_values) * 100.0, 2) if five_hour_values else 0.0
     weekly_average_pct = average_window_pct("weekly_used_pct")
     five_hour_reset_at = earliest_reset_at("five_hour_reset_at")
     weekly_reset_at = earliest_reset_at("weekly_reset_at")
@@ -328,26 +338,36 @@ def activity(
     # token column, alongside volume totals in the same bucket scan.
     rows = (
         db.query(
-            bucket_col.label("bucket"), _tokens_sum().label("tokens"),
+            bucket_col.label("bucket"),
+            _tokens_sum().label("tokens"),
             func.count(UsageRecordDb.id).label("requests"),
             func.count(UsageRecordDb.id).filter(*measured).label("samples"),
             func.percentile_cont([0.1, 0.5, 0.9]).within_group(UsageRecordDb.input_tokens).filter(*measured).label("input_quantiles"),
             func.percentile_cont([0.1, 0.5, 0.9]).within_group(UsageRecordDb.output_tokens).filter(*measured).label("output_quantiles"),
-        ).filter(*scope).group_by(bucket_col).all()
+        )
+        .filter(*scope)
+        .group_by(bucket_col)
+        .all()
     )
     # Counts and TPS share the same model/bucket grouping. Missing TPS stays
     # null while request counts still include requests without measured usage.
     model_rows = (
-        db.query(bucket_col.label("bucket"), UsageRecordDb.model,
-                 func.count(UsageRecordDb.id).label("requests"),
-                 func.avg(UsageRecordDb.tokens_per_second).filter(UsageRecordDb.tokens_per_second > 0).label("average_tps"))
-        .filter(*scope).group_by(bucket_col, UsageRecordDb.model).all()
+        db.query(
+            bucket_col.label("bucket"),
+            UsageRecordDb.model,
+            func.count(UsageRecordDb.id).label("requests"),
+            func.avg(UsageRecordDb.tokens_per_second).filter(UsageRecordDb.tokens_per_second > 0).label("average_tps"),
+        )
+        .filter(*scope)
+        .group_by(bucket_col, UsageRecordDb.model)
+        .all()
     )
     user_rows = (
-        db.query(bucket_col.label("bucket"), UsageRecordDb.user_id, UserDb.name,
-                 func.count(UsageRecordDb.id).label("requests"))
+        db.query(bucket_col.label("bucket"), UsageRecordDb.user_id, UserDb.name, func.count(UsageRecordDb.id).label("requests"))
         .outerjoin(UserDb, UsageRecordDb.user_id == UserDb.id)
-        .filter(*scope).group_by(bucket_col, UsageRecordDb.user_id, UserDb.name).all()
+        .filter(*scope)
+        .group_by(bucket_col, UsageRecordDb.user_id, UserDb.name)
+        .all()
     )
 
     def key(value: datetime) -> datetime:
@@ -369,24 +389,25 @@ def activity(
         if row is None or not row.samples:
             return None
         quantiles = getattr(row, f"{side}_quantiles")
-        return {"samples": int(row.samples), "p10": float(quantiles[0]),
-                "median": float(quantiles[1]), "p90": float(quantiles[2])}
+        return {"samples": int(row.samples), "p10": float(quantiles[0]), "median": float(quantiles[1]), "p90": float(quantiles[2])}
 
     points = []
     cursor = floor(start)
     while cursor < end:
         bucket_key = cursor.replace(tzinfo=None)
         row = by_bucket.get(bucket_key)
-        points.append(ActivityPoint(
-            ts=cursor.astimezone(timezone.utc).isoformat(),
-            requests=int(row.requests) if row is not None else 0,
-            tokens=int(row.tokens or 0) if row is not None else 0,
-            model_tps=tps_by_bucket.get(bucket_key, {}),
-            requests_by_model=model_counts.get(bucket_key, {}),
-            requests_by_user=user_counts.get(bucket_key, {}),
-            input_distribution=distribution_values(row, "input"),
-            output_distribution=distribution_values(row, "output"),
-        ))
+        points.append(
+            ActivityPoint(
+                ts=cursor.astimezone(timezone.utc).isoformat(),
+                requests=int(row.requests) if row is not None else 0,
+                tokens=int(row.tokens or 0) if row is not None else 0,
+                model_tps=tps_by_bucket.get(bucket_key, {}),
+                requests_by_model=model_counts.get(bucket_key, {}),
+                requests_by_user=user_counts.get(bucket_key, {}),
+                input_distribution=distribution_values(row, "input"),
+                output_distribution=distribution_values(row, "output"),
+            )
+        )
         cursor += unit
     return ActivityResponse(granularity=granularity, points=points, user_names=user_names)
 
@@ -696,6 +717,7 @@ _dashboard_reads = ThreadPoolExecutor(max_workers=4, thread_name_prefix="dashboa
 
 def _dashboard_read(compute, rng, principal):
     from app.utils.postgres.base import SessionFactory
+
     with SessionFactory() as session:
         return compute(rng=rng, _=principal, db=session)
 
@@ -709,12 +731,15 @@ def dashboard_analytics(
     from app.routes.lookups import analytics_lookups
 
     computations = {
-        "overview": overview, "activity": activity, "hourly": hourly,
-        "lookups": analytics_lookups, "distributions": distributions,
-        "model_mix": model_mix, "thinking_level_mix": thinking_level_mix,
+        "overview": overview,
+        "activity": activity,
+        "hourly": hourly,
+        "lookups": analytics_lookups,
+        "distributions": distributions,
+        "model_mix": model_mix,
+        "thinking_level_mix": thinking_level_mix,
     }
-    futures = {name: _dashboard_reads.submit(_dashboard_read, compute, rng, _)
-               for name, compute in computations.items()}
+    futures = {name: _dashboard_reads.submit(_dashboard_read, compute, rng, _) for name, compute in computations.items()}
     result = {}
     for name, future in futures.items():
         try:
