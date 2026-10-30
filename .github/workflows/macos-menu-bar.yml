@@ -28,6 +28,14 @@ jobs:
       - name: Build release binaries (app, snapshots, widget source)
         run: swift build --configuration release
 
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate and test Xcode host project
+        run: |
+          xcodegen generate --spec Host/project.yml --project Host/CodexProxy.xcodeproj
+          xcodebuild test -project Host/CodexProxy.xcodeproj -scheme CodexProxy -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+
       - name: Render native SwiftUI snapshot
         shell: bash
         run: |

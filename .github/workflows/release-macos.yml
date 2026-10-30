@@ -38,8 +38,14 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=macos-v$version" >> "$GITHUB_OUTPUT"
 
-      - name: Build release binary
-        run: swift build --configuration release
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode host project
+        run: xcodegen generate --spec Host/project.yml --project Host/CodexProxy.xcodeproj
+
+      - name: Build and test macOS host project
+        run: xcodebuild test -project Host/CodexProxy.xcodeproj -scheme CodexProxy -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 
       - name: Assemble and sign application bundle
         shell: bash

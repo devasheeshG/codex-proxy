@@ -1,0 +1,70 @@
+name: CodexProxy
+options:
+  minimumXcodeGenVersion: 2.38.0
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    SWIFT_VERSION: 5.9
+    MACOSX_DEPLOYMENT_TARGET: 14.0
+    DEVELOPMENT_TEAM: ""
+targets:
+  CodexMenuBarKit:
+    type: framework
+    platform: macOS
+    sources:
+      - path: ../Sources/CodexMenuBarKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.recallrai.codexproxy.menubarkit
+        GENERATE_INFOPLIST_FILE: YES
+  CodexMenuBar:
+    type: application
+    platform: macOS
+    sources:
+      - path: ../Sources/CodexMenuBar
+    resources:
+      - path: ../Sources/CodexMenuBar/Resources
+    dependencies:
+      - target: CodexMenuBarKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.recallrai.codexproxy
+        INFOPLIST_FILE: ../Resources/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ../Resources/CodexProxy.entitlements
+        LSUIElement: YES
+        PRODUCT_NAME: Codex Proxy
+  CodexMenuBarKitTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ../Tests/CodexMenuBarKitTests
+    dependencies:
+      - target: CodexMenuBarKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.recallrai.codexproxy.menubarkit-tests
+        GENERATE_INFOPLIST_FILE: YES
+  CodexProxyWidget:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: ../Sources/CodexProxyWidget
+    dependencies:
+      - target: CodexMenuBarKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.recallrai.codexproxy.widget
+        INFOPLIST_FILE: WidgetExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ../Resources/CodexProxy.entitlements
+        PRODUCT_NAME: CodexProxyWidget
+        SKIP_INSTALL: YES
+schemes:
+  CodexProxy:
+    build:
+      targets:
+        CodexMenuBar: all
+        CodexProxyWidget: all
+    test:
+      targets:
+        - CodexMenuBarKitTests
