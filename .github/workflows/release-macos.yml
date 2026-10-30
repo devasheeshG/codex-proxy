@@ -39,7 +39,7 @@ jobs:
           echo "tag=macos-v$version" >> "$GITHUB_OUTPUT"
 
       - name: Install XcodeGen
-        run: brew install xcodegen
+        run: brew install xcodegen librsvg
 
       - name: Generate Xcode host project
         run: cd Host && xcodegen generate --spec project.yml
@@ -63,9 +63,9 @@ jobs:
           iconset="$RUNNER_TEMP/CodexProxy.iconset"
           mkdir -p "$iconset"
           for size in 16 32 128 256 512; do
-            sips -s format png -z "$size" "$size" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}.png" >/dev/null
+            rsvg-convert -w "$size" -h "$size" Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}.png"
             doubled=$((size * 2))
-            sips -s format png -z "$doubled" "$doubled" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+            rsvg-convert -w "$doubled" -h "$doubled" Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}@2x.png"
           done
           iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
           codesign --force --deep --sign - --entitlements Resources/CodexProxy.entitlements "$app"
