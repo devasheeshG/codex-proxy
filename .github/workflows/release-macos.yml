@@ -68,7 +68,7 @@ jobs:
             rsvg-convert -w "$doubled" -h "$doubled" ../Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}@2x.png"
           done
           iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
-          codesign --force --deep --sign - --entitlements Resources/CodexProxy.entitlements "$app"
+          codesign --force --deep --sign - --entitlements ../Resources/CodexProxy.entitlements "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
           test -x "$app/Contents/MacOS/CodexMenuBar"
           open "$app"
