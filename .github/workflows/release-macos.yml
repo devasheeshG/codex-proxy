@@ -45,7 +45,7 @@ jobs:
         run: cd Host && xcodegen generate --spec project.yml
 
       - name: Build and test macOS host project
-        run: xcodebuild test -project Host/CodexProxy.xcodeproj -scheme CodexProxy -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
+        run: xcodebuild test -project CodexProxy.xcodeproj -scheme CodexProxy -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 
       - name: Assemble and sign application bundle
         shell: bash
