@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ProxyOverview: Decodable {
+struct ProxyOverview: Decodable {
     let activeAccounts: Int
     let totalAccounts: Int
     let fiveHourAveragePct: Double
@@ -21,7 +21,7 @@ public struct ProxyOverview: Decodable {
     }
 }
 
-public struct ProxyAccount: Decodable, Identifiable {
+struct ProxyAccount: Decodable, Identifiable {
     let id: UUID
     let label: String
     let accountEmail: String?
