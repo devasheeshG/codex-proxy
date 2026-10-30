@@ -58,6 +58,9 @@ jobs:
           xcodebuild archive -project CodexProxy.xcodeproj -scheme CodexProxy -configuration Release -archivePath "$RUNNER_TEMP/CodexProxy.xcarchive" CODE_SIGNING_ALLOWED=NO SKIP_INSTALL=NO
           app="$RUNNER_TEMP/CodexProxy.xcarchive/Products/Applications/Codex Proxy.app"
           test -d "$app/Contents/PlugIns/CodexProxyWidget.appex"
+          executable=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$app/Contents/Info.plist")
+          test "$executable" = "CodexMenuBar"
+          test -x "$app/Contents/MacOS/$executable"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$app/Contents/Info.plist"
           iconset="$RUNNER_TEMP/CodexProxy.iconset"
