@@ -71,7 +71,7 @@ public final class DashboardModel: ObservableObject {
         SecureStore.write(rawPassword, service: "proxy.dashboard.password")
         SecureStore.write(token, service: "proxy.dashboard.token")
         isAuthenticated = true
-        await refresh()
+        refresh()
     }
 
     public func showAccounts() {

@@ -1,6 +1,6 @@
 import Foundation
 
-struct ProxyOverview: Decodable {
+public struct ProxyOverview: Decodable {
     let activeAccounts: Int
     let totalAccounts: Int
     let fiveHourAveragePct: Double
@@ -21,7 +21,7 @@ struct ProxyOverview: Decodable {
     }
 }
 
-struct ProxyAccount: Decodable, Identifiable {
+public struct ProxyAccount: Decodable, Identifiable {
     let id: UUID
     let label: String
     let accountEmail: String?
@@ -64,7 +64,7 @@ struct ProxyAPI {
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw ProxyAPIError.invalidResponse(0) }
         guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? decoder.decode([String: String].self, from: data))["detail"] ?? "Proxy request failed."
+            let detail = (try? decoder.decode([String: String].self, from: data))?["detail"] ?? "Proxy request failed."
             throw ProxyAPIError.server(detail)
         }
         return try decoder.decode(T.self, from: data)

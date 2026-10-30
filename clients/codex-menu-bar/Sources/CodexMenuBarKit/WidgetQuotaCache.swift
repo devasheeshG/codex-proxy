@@ -14,7 +14,7 @@ public enum WidgetQuotaCache {
     static let suite = "group.com.recallrai.codexproxy"
     static let key = "quota-widget-snapshot"
     static let defaults = UserDefaults(suiteName: suite)
-    public static func write(overview: ProxyOverview, activeAccounts: Int, totalAccounts: Int) {
+    static func write(overview: ProxyOverview, activeAccounts: Int, totalAccounts: Int) {
         let snapshot = WidgetQuotaSnapshot(updatedAt: Date(), weekly: overview.weeklyAveragePct, monthly: overview.monthlyAveragePct, activeAccounts: activeAccounts, totalAccounts: totalAccounts, weeklyReset: overview.weeklyResetAt, monthlyReset: overview.monthlyResetAt)
         if let data = try? JSONEncoder().encode(snapshot) { defaults?.set(data, forKey: key) }
     }
