@@ -33,7 +33,7 @@ jobs:
 
       - name: Generate and test Xcode host project
         run: |
-          xcodegen generate --spec Host/project.yml --project Host/CodexProxy.xcodeproj
+          cd Host && xcodegen generate --spec project.yml
           xcodebuild test -project Host/CodexProxy.xcodeproj -scheme CodexProxy -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 
       - name: Render native SwiftUI snapshot
