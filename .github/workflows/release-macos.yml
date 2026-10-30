@@ -60,6 +60,21 @@ jobs:
           test -d "$app/Contents/PlugIns/CodexProxyWidget.appex"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$app/Contents/Info.plist"
+          iconset="$RUNNER_TEMP/CodexProxy.iconset"
+          mkdir -p "$iconset"
+          for size in 16 32 128 256 512; do
+            sips -s format png -z "$size" "$size" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}.png" >/dev/null
+            doubled=$((size * 2))
+            sips -s format png -z "$doubled" "$doubled" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+          done
+          iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
+          codesign --force --deep --sign - --entitlements Resources/CodexProxy.entitlements "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          test -x "$app/Contents/MacOS/CodexMenuBar"
+          open "$app"
+          sleep 4
+          pgrep -f "$app/Contents/MacOS/CodexMenuBar" >/dev/null
+          pkill -f "$app/Contents/MacOS/CodexMenuBar" || true
           staging="$RUNNER_TEMP/Codex Proxy Installer"
           mkdir -p "$staging"
           cp -R "$app" "$staging/Codex Proxy.app"
