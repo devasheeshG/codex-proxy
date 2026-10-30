@@ -63,9 +63,9 @@ jobs:
           iconset="$RUNNER_TEMP/CodexProxy.iconset"
           mkdir -p "$iconset"
           for size in 16 32 128 256 512; do
-            rsvg-convert -w "$size" -h "$size" Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}.png"
+            rsvg-convert -w "$size" -h "$size" ../Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}.png"
             doubled=$((size * 2))
-            rsvg-convert -w "$doubled" -h "$doubled" Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}@2x.png"
+            rsvg-convert -w "$doubled" -h "$doubled" ../Sources/CodexMenuBar/Resources/OpenAIMark.svg -o "$iconset/icon_${size}x${size}@2x.png"
           done
           iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
           codesign --force --deep --sign - --entitlements Resources/CodexProxy.entitlements "$app"
