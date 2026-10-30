@@ -27,6 +27,8 @@ targets:
       - path: ../Sources/CodexMenuBar/Resources
     dependencies:
       - target: CodexMenuBarKit
+      - target: CodexProxyWidget
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.recallrai.codexproxy

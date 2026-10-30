@@ -47,31 +47,19 @@ jobs:
       - name: Build and test macOS host project
         run: xcodebuild test -project CodexProxy.xcodeproj -scheme CodexProxy -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO
 
-      - name: Assemble and sign application bundle
+      - name: Archive host app and embedded widget
         shell: bash
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          app="$RUNNER_TEMP/Codex Proxy.app"
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp .build/release/CodexMenuBar "$app/Contents/MacOS/CodexMenuBar"
-          cp Resources/Info.plist "$app/Contents/Info.plist"
-          cp Sources/CodexMenuBar/Resources/OpenAIMark.svg "$app/Contents/Resources/OpenAIMark.svg"
-          iconset="$RUNNER_TEMP/CodexProxy.iconset"
-          mkdir -p "$iconset"
-          for size in 16 32 128 256 512; do
-            sips -s format png -z "$size" "$size" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}.png" >/dev/null
-            doubled=$((size * 2))
-            sips -s format png -z "$doubled" "$doubled" Sources/CodexMenuBar/Resources/OpenAIMark.svg --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
-          done
-          iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
+          cd Host
+          xcodebuild archive -project CodexProxy.xcodeproj -scheme CodexProxy -configuration Release -archivePath "$RUNNER_TEMP/CodexProxy.xcarchive" CODE_SIGNING_ALLOWED=NO SKIP_INSTALL=NO
+          app="$RUNNER_TEMP/CodexProxy.xcarchive/Products/Applications/Codex Proxy.app"
+          test -d "$app/Contents/PlugIns/CodexProxyWidget.appex"
           /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$app/Contents/Info.plist"
           /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $GITHUB_RUN_NUMBER" "$app/Contents/Info.plist"
-          chmod +x "$app/Contents/MacOS/CodexMenuBar"
-          codesign --force --deep --sign - "$app"
-          codesign --verify --deep --strict "$app"
           staging="$RUNNER_TEMP/Codex Proxy Installer"
           mkdir -p "$staging"
           cp -R "$app" "$staging/Codex Proxy.app"
