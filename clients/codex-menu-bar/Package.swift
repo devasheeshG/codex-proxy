@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "CodexMenuBar",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "CodexMenuBar", targets: ["CodexMenuBar"]),
         .executable(name: "CodexMenuBarSnapshot", targets: ["CodexMenuBarSnapshot"]),

@@ -1,4 +1,5 @@
 import SwiftUI
+import CodexMenuBarKit
 import WidgetKit
 
 struct QuotaWidgetEntry: TimelineEntry {
@@ -31,8 +32,8 @@ struct QuotaWidgetView: View {
             else {
                 HStack { metric("Weekly", entry.weekly); metric("Monthly", entry.monthly) }
                 Text("\(entry.active)/\(entry.total) accounts active").font(.caption).foregroundStyle(.secondary)
-                if let reset = entry.weeklyReset { Text("Weekly reset \\(reset, style: .relative)").font(.caption2).foregroundStyle(.secondary) }
-                if let reset = entry.monthlyReset { Text("Monthly reset \\(reset, style: .relative)").font(.caption2).foregroundStyle(.secondary) }
+                if let reset = entry.weeklyReset { Text("Weekly reset \(reset, style: .relative)").font(.caption2).foregroundStyle(.secondary) }
+                if let reset = entry.monthlyReset { Text("Monthly reset \(reset, style: .relative)").font(.caption2).foregroundStyle(.secondary) }
             }
         }.containerBackground(.background, for: .widget)
     }
