@@ -7,6 +7,7 @@ let package = Package(
     products: [
         .executable(name: "CodexMenuBar", targets: ["CodexMenuBar"]),
         .executable(name: "CodexMenuBarSnapshot", targets: ["CodexMenuBarSnapshot"]),
+        .executable(name: "CodexProxyWidget", targets: ["CodexProxyWidget"]),
     ],
     targets: [
         .target(name: "CodexMenuBarKit"),
@@ -17,6 +18,14 @@ let package = Package(
         ),
         .executableTarget(
             name: "CodexMenuBarSnapshot",
+            dependencies: ["CodexMenuBarKit"]
+        ),
+        .executableTarget(
+            name: "CodexProxyWidget",
+            dependencies: ["CodexMenuBarKit"]
+        ),
+        .testTarget(
+            name: "CodexMenuBarKitTests",
             dependencies: ["CodexMenuBarKit"]
         ),
     ]

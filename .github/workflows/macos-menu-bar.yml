@@ -25,7 +25,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build release binary
+      - name: Build release binaries (app, snapshots, widget source)
         run: swift build --configuration release
 
       - name: Render native SwiftUI snapshot

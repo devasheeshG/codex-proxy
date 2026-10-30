@@ -191,8 +191,10 @@ def overview(
     ]
     five_hour_average_pct = round(sum(five_hour_values) / len(five_hour_values) * 100.0, 2) if five_hour_values else 0.0
     weekly_average_pct = average_window_pct("weekly_used_pct")
+    monthly_average_pct = average_window_pct("monthly_used_pct")
     five_hour_reset_at = earliest_reset_at("five_hour_reset_at")
     weekly_reset_at = earliest_reset_at("weekly_reset_at")
+    monthly_reset_at = earliest_reset_at("monthly_reset_at")
     if active_accounts:
         pool_used_pct = round(
             sum(max(0.0, min(1.0, rotation.account_load(account))) for account in active_accounts) / len(active_accounts),
@@ -214,8 +216,10 @@ def overview(
         usable_accounts=len(usable_accounts),
         five_hour_average_pct=five_hour_average_pct,
         weekly_average_pct=weekly_average_pct,
+        monthly_average_pct=monthly_average_pct,
         five_hour_reset_at=five_hour_reset_at,
         weekly_reset_at=weekly_reset_at,
+        monthly_reset_at=monthly_reset_at,
         pool_used_pct=pool_used_pct,
         pool_remaining_pct=pool_remaining_pct,
         total_users=db.query(UserDb).count(),

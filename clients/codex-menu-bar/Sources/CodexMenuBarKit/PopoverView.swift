@@ -43,7 +43,7 @@ public struct PopoverView: View {
             HStack {
                 Text("Updated ") + Text(model.lastUpdated, style: .relative) + Text(" ago")
                 Spacer()
-                Button("Open dashboard") { }
+                Button("Open dashboard") { if let url = URL(string: model.baseURL) { NSWorkspace.shared.open(url) } }
                     .buttonStyle(.link)
                     .font(.caption)
                 Button { NSApplication.shared.terminate(nil) } label: {
@@ -130,17 +130,17 @@ private struct OverviewView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                Metric(title: "Tokens processed", value: "6.30B", detail: "+14.2% this month")
-                Metric(title: "Requests", value: "50,706", detail: "1,842 today")
+                Metric(title: "Tokens processed", value: model.overview.map { formatCompact($0.tokens) } ?? "—", detail: model.loadError ?? "Live proxy data")
+                Metric(title: "Requests", value: model.overview.map { formatCompact($0.requests) } ?? "—", detail: "Current range")
             }
             HStack(spacing: 8) {
-                Metric(title: "This month", value: "$1,626.80", detail: "$4,580.97 all-time")
-                Metric(title: "Cache hit rate", value: "96.8%", detail: "5.91B cache-read")
+                Metric(title: "Active accounts", value: model.overview.map { "\($0.activeAccounts)/\($0.totalAccounts)" } ?? "—", detail: "Authenticated and enabled")
+                Metric(title: "Weekly usage", value: model.overview.map { "\(Int($0.weeklyAveragePct))%" } ?? "—", detail: "Next reset \(model.overview.map { formatReset($0.weeklyResetAt) } ?? "unknown")")
             }
             SectionTitle(title: "Pool windows", action: "Accounts")
             HStack(spacing: 8) {
-                Quota(title: "5-hour average", value: 46, reset: "rolling")
-                Quota(title: "Weekly average", value: 54, reset: "rolling")
+                Quota(title: "5-hour average", value: Int(model.overview?.fiveHourAveragePct ?? 0), reset: formatReset(model.overview?.fiveHourResetAt))
+                Quota(title: "Weekly average", value: Int(model.overview?.weeklyAveragePct ?? 0), reset: formatReset(model.overview?.weeklyResetAt))
             }
             SectionTitle(title: "Activity · 30 days", action: "Events")
             ActivitySparkline()
@@ -171,7 +171,7 @@ private struct AccountsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) { Text("Account pool").font(.title3.bold()); Text("12 accounts · 8 usable · 2 re-auth · 2 cooling").font(.caption).foregroundStyle(ProxyTheme.muted) }
+                VStack(alignment: .leading, spacing: 2) { Text("Account pool").font(.title3.bold()); Text("\(model.accounts.count) accounts · \(model.accounts.filter(\.usable).count) usable").font(.caption).foregroundStyle(ProxyTheme.muted) }
                 Spacer()
             }
             Picker("Filter", selection: $filter) { ForEach(["All", "Authenticated", "Usable"], id: \.self) { Text($0).tag($0) } }
@@ -199,6 +199,9 @@ private struct AccountRow: View {
         .overlay(RoundedRectangle(cornerRadius: 9).stroke(ProxyTheme.border, lineWidth: 1))
     }
 }
+
+private func formatReset(_ date: Date?) -> String { guard let date else { return "unknown" }; return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date()) }
+private func formatCompact(_ value: Int) -> String { value >= 1_000_000_000 ? String(format: "%.2fB", Double(value)/1e9) : value >= 1_000_000 ? String(format: "%.2fM", Double(value)/1e6) : value >= 1_000 ? String(format: "%.1fk", Double(value)/1e3) : "\(value)" }
 
 private struct Metric: View { let title: String; let value: String; let detail: String; var body: some View { VStack(alignment: .leading, spacing: 5) { Text(title.uppercased()).font(.caption2).foregroundStyle(ProxyTheme.muted); Text(value).font(.system(.headline, design: .monospaced).weight(.semibold)); Text(detail).font(.caption2).foregroundStyle(ProxyTheme.muted) }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(ProxyTheme.card, in: RoundedRectangle(cornerRadius: 9)) } }
 private struct Quota: View { let title: String; let value: Int; let reset: String; var color: Color { value >= 95 ? ProxyTheme.bad : value >= 80 ? ProxyTheme.warn : ProxyTheme.good }; var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(title).font(.caption2); Spacer(); Text("\(value)%").font(.caption2.monospaced()).bold() }; ProgressView(value: Double(value), total: 100).tint(color); Text("\(reset)").font(.caption2).foregroundStyle(ProxyTheme.muted) }.frame(maxWidth: .infinity, alignment: .leading).padding(9).background(ProxyTheme.panel, in: RoundedRectangle(cornerRadius: 8)) } }

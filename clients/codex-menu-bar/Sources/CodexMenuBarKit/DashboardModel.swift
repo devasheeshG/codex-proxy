@@ -31,6 +31,9 @@ public final class DashboardModel: ObservableObject {
     @Published var username: String
     @Published var password: String
     @Published private(set) var isAuthenticated = false
+    @Published private(set) var overview: ProxyOverview?
+    @Published private(set) var liveAccounts: [ProxyAccount] = []
+    @Published private(set) var loadError: String?
 
     public init() {
         baseURL = UserDefaults.standard.string(forKey: "proxy.baseURL") ?? ""
@@ -68,25 +71,38 @@ public final class DashboardModel: ObservableObject {
         SecureStore.write(rawPassword, service: "proxy.dashboard.password")
         SecureStore.write(token, service: "proxy.dashboard.token")
         isAuthenticated = true
+        await refresh()
     }
 
     public func showAccounts() {
         tab = .accounts
     }
 
-    let accounts: [Account] = [
-        Account(name: "Account 01", email: "account01@example.test", state: .ready, authenticated: true, usable: true, fiveHour: 18, weekly: 42, fiveHourReset: "3h 34m", weeklyReset: "6d 22h"),
-        Account(name: "Account 02", email: "account02@example.test", state: .ready, authenticated: true, usable: true, fiveHour: 63, weekly: 71, fiveHourReset: "2h 12m", weeklyReset: "4d 17h"),
-        Account(name: "Account 03", email: "account03@example.test", state: .cooling, authenticated: true, usable: false, fiveHour: 100, weekly: 45, fiveHourReset: "1h 56m", weeklyReset: "2d 17h"),
-        Account(name: "Account 04", email: "account04@example.test", state: .reauth, authenticated: false, usable: false, fiveHour: 0, weekly: 2, fiveHourReset: "unknown", weeklyReset: "5d 23h"),
-    ]
+    var accounts: [Account] {
+        liveAccounts.map { account in
+            let state: AccountState = account.providerHealth == "REAUTH_REQUIRED" ? .reauth : (account.status == "COOLDOWN" ? .cooling : .ready)
+            return Account(name: account.label, email: account.accountEmail ?? "—", state: state,
+                           authenticated: account.providerHealth != "REAUTH_REQUIRED", usable: account.providerHealth == "HEALTHY" && account.status == "ACTIVE",
+                           fiveHour: Int((account.fiveHourUsedPct ?? 0) * 100), weekly: Int((account.weeklyUsedPct ?? 0) * 100),
+                           fiveHourReset: formatReset(account.fiveHourResetAt), weeklyReset: formatReset(account.weeklyResetAt))
+        }
+    }
+
+    private func formatReset(_ date: Date?) -> String { guard let date else { return "unknown" }; return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date()) }
 
     func refresh() {
-        isRefreshing = true
+        guard isAuthenticated else { return }
+        isRefreshing = true; loadError = nil
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(500))
-            lastUpdated = Date()
-            isRefreshing = false
+            defer { isRefreshing = false }
+            do {
+                let base = baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
+                guard let url = URL(string: base.hasSuffix("/") ? base : base + "/") else { throw ProxyAPIError.notConfigured }
+                let api = ProxyAPI(baseURL: url, token: SecureStore.read(service: "proxy.dashboard.token") ?? "")
+                async let nextOverview = api.overview(); async let nextAccounts = api.accounts()
+                overview = try await nextOverview; liveAccounts = try await nextAccounts; lastUpdated = Date()
+                WidgetQuotaCache.write(overview: overview!, activeAccounts: liveAccounts.filter { $0.providerHealth != "REAUTH_REQUIRED" }.count, totalAccounts: liveAccounts.count)
+            } catch { loadError = error.localizedDescription }
         }
     }
 }
