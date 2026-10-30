@@ -70,7 +70,7 @@ jobs:
           iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
           codesign --force --deep --sign - --entitlements ../Resources/CodexProxy.entitlements "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
-          test -x "$app/Contents/MacOS/CodexMenuBar"
+          test -x "$app/Contents/MacOS/Codex Proxy"
           if open "$app"; then
             echo "Codex Proxy app launch request accepted by macOS."
           else
