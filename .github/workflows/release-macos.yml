@@ -73,7 +73,7 @@ jobs:
           iconutil -c icns "$iconset" -o "$app/Contents/Resources/OpenAIMark.icns"
           codesign --force --deep --sign - --entitlements ../Resources/CodexProxy.entitlements "$app"
           codesign --verify --deep --strict --verbose=2 "$app"
-          test -x "$app/Contents/MacOS/Codex Proxy"
+          test -x "$app/Contents/MacOS/$executable"
           echo "Codex Proxy bundle validation and executable smoke checks passed."
           echo "GUI launch is covered by the Xcode host test job; this archive runner is headless."
           staging="$RUNNER_TEMP/Codex Proxy Installer"

@@ -179,16 +179,18 @@ def overview(
                 resets.append(reset_at)
         return min(resets, default=None)
 
-    five_hour_average_pct = average_window_pct("five_hour_used_pct")
-    # A full weekly window makes the account unavailable regardless of its
-    # current five-hour percentage. Do not count that stale five-hour capacity
-    # in the pool average shown to operators.
-    five_hour_accounts = [account for account in active_accounts if account.weekly_used_pct is None or account.weekly_used_pct < 1.0]
-    five_hour_values = [
-        getattr(account, "five_hour_used_pct" if "five_hour_used_pct" in dir(account) else "session_used_pct")
-        for account in five_hour_accounts
-        if getattr(account, "five_hour_used_pct" if "five_hour_used_pct" in dir(account) else "session_used_pct") is not None
-    ]
+    # A weekly-exhausted account has no usable five-hour capacity even when
+    # the provider's cached five-hour field is stale or lower. Count it as
+    # fully used so the pool average reflects the capacity users can actually
+    # consume.
+    five_hour_values = []
+    for account in active_accounts:
+        if account.weekly_used_pct is not None and account.weekly_used_pct >= 1.0:
+            five_hour_values.append(1.0)
+            continue
+        value = getattr(account, "five_hour_used_pct", None)
+        if value is not None:
+            five_hour_values.append(value)
     five_hour_average_pct = round(sum(five_hour_values) / len(five_hour_values) * 100.0, 2) if five_hour_values else 0.0
     weekly_average_pct = average_window_pct("weekly_used_pct")
     monthly_average_pct = average_window_pct("monthly_used_pct")

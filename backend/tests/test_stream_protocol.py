@@ -46,6 +46,25 @@ def test_pending_read_transport_error_is_propagated():
     asyncio.run(run())
 
 
+def test_pre_output_transport_error_is_retryable():
+    async def run():
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield frame("response.created", response={"id": "resp_real", "status": "in_progress"})
+                raise httpx.RemoteProtocolError("peer closed connection")
+
+        iterator = proxy._iter_sanitized_sse(httpx.Response(200, stream=Stream()))
+        assert b"response.created" in await anext(iterator)
+        try:
+            await anext(iterator)
+        except proxy._PreOutputProviderFailure as exc:
+            assert "upstream transport" in str(exc)
+        else:
+            raise AssertionError("Pre-output transport failure was not made retryable")
+
+    asyncio.run(run())
+
+
 def test_headerless_slow_stream_returns_prefix_and_resumes(monkeypatch):
     async def run():
         release = asyncio.Event()

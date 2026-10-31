@@ -61,9 +61,10 @@ DEFAULT_MAX_CONCURRENT_REQUESTS_PER_ACCOUNT = 3
 DEFAULT_POOL_WAIT_TIMEOUT_SECONDS = 150
 DEFAULT_POOL_WAIT_POLL_INTERVAL_SECONDS = 2
 # A pre-output provider error is retryable, but it is not proof that the
-# account's quota is exhausted.  Keep the transient circuit short and distinct
+# account's quota is exhausted. Keep it long enough to avoid retry storms when
+# several rows share one upstream provider identity, while remaining distinct
 # from the account's configured 429 cooldown.
-DEFAULT_TRANSIENT_UPSTREAM_COOLDOWN_SECONDS = 5
+DEFAULT_TRANSIENT_UPSTREAM_COOLDOWN_SECONDS = 30
 
 
 class Settings(BaseSettings):

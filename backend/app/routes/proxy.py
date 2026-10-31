@@ -427,6 +427,15 @@ async def _iter_sanitized_sse(response: httpx.Response):
                 buffer.extend(task.result())
             except StopAsyncIteration:
                 break
+            except httpx.TransportError as exc:
+                # A provider can close the chunked response before it emits
+                # any model output. Treat that like a pre-output error frame
+                # so the account failover loop can keep the client stream
+                # alive. Once output has started, replaying another account
+                # would duplicate content, so preserve the transport error.
+                if not output_started:
+                    raise _PreOutputProviderFailure(f"upstream transport: {exc}") from exc
+                raise
             while match := re.search(rb"\r?\n\r?\n", buffer):
                 end = match.end()
                 frame = bytes(buffer[:end])
