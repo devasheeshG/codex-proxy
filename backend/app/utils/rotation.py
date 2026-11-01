@@ -2,19 +2,20 @@
 # Description: Account rotation engine -- token freshness, quota tracking, quota-aware selection, and 429 cooldowns.
 
 import json
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Dict, Mapping, Optional, Set
 
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app import config
 from app.model_catalog import configured_model_ids
 from app.utils import crypto, oauth, provider_health
 from app.utils.models.api import AccountStatus, ProviderHealth
-from app.utils.postgres import AccountDb, UserDb
+from app.utils.postgres import AccountDb, ProxyEventDb, UserDb
 
 if TYPE_CHECKING:
     from app.utils.egress import EgressTarget
@@ -423,6 +424,60 @@ def apply_rate_limit_body(account: AccountDb, body: bytes) -> tuple[Optional[str
     return reached_type, reset_at
 
 
+def recover_confirmed_quota_cooldown(account: AccountDb, usage: Mapping) -> bool:
+    """Retire only the quota cooldown proven obsolete by a fresh provider probe.
+
+    Match the saved deadline to the recorded quota failure. Generic backoffs,
+    recent short 429s, partial probes and genuinely exhausted accounts stay parked.
+    """
+    if account.status != AccountStatus.COOLDOWN or account.cooldown_until is None:
+        return False
+    if account.provider_health == ProviderHealth.REAUTH_REQUIRED or usage.get("limit_reached") is True:
+        return False
+    for key in ("five_hour", "weekly"):
+        bucket = usage.get(key)
+        if not isinstance(bucket, Mapping) or not isinstance(bucket.get("utilization"), (int, float)) or not 0 <= bucket["utilization"] <= 1:
+            return False
+    if any(window.used_pct is not None and window.used_pct >= window.threshold for window in quota_windows(account)):
+        return False
+    db = object_session(account)
+    if db is None:
+        return False
+    event = (
+        db.query(ProxyEventDb)
+        .filter(
+            ProxyEventDb.account_id == account.id,
+            ProxyEventDb.event_type.in_(["account.rate_limited", "account.cooldown", "account.transient_error"]),
+        )
+        .order_by(ProxyEventDb.created_at.desc(), ProxyEventDb.id.desc())
+        .first()
+    )
+    if event is None or event.event_type != "account.rate_limited":
+        return False
+    try:
+        metadata = json.loads(event.metadata_json or "{}")
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(metadata, Mapping) or metadata.get("failure_class") != "account_quota":
+        return False
+    match = re.fullmatch(r"Cooling down for (\d+)s", event.message or "")
+    if not match or int(match[1]) <= max(60, account.cooldown_seconds):
+        return False
+    created_at = event.created_at
+    deadline = account.cooldown_until
+    if created_at.tzinfo is None:
+        created_at = created_at.replace(tzinfo=timezone.utc)
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    expected = created_at + timedelta(seconds=int(match[1]))
+    if abs((expected - deadline).total_seconds()) > 5:
+        return False
+    account.cooldown_until = None
+    account.status = AccountStatus.ACTIVE
+    account.updated_at = datetime.now(timezone.utc)
+    return True
+
+
 def apply_usage_probe(account: AccountDb, usage: Mapping[str, object]) -> bool:
     """Update quota fields from a zero-spend usage probe (see oauth.fetch_usage)."""
     for key, used_attr, reset_attr in (
@@ -453,6 +508,7 @@ def apply_usage_probe(account: AccountDb, usage: Mapping[str, object]) -> bool:
     if usage.get("reset_credits_available") is not None:
         account.reset_credits_available = int(usage["reset_credits_available"])
     account.quota_refreshed_at = datetime.now(timezone.utc)
+    recover_confirmed_quota_cooldown(account, usage)
     return bool(usage.get("limit_reached", False))
 
 

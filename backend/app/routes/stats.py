@@ -237,6 +237,7 @@ def overview(
         total_accounts=len(accounts),
         active_accounts=len(active_accounts),
         usable_accounts=len(usable_accounts),
+        total_reset_credits_available=sum(max(0, account.reset_credits_available or 0) for account in active_accounts),
         five_hour_average_pct=five_hour_average_pct,
         weekly_average_pct=weekly_average_pct,
         monthly_average_pct=monthly_average_pct,
