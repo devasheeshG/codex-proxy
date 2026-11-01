@@ -79,14 +79,11 @@ No manual installation steps are required.
 
 ### Optional macOS menu-bar app
 
-If you use the dashboard from a Mac, the companion menu-bar app provides compact
-Overview and Accounts views, including the same `All`, `Authenticated`, and
-`Usable` account filters. The latest ad-hoc-signed build is published at the
-[Codex Proxy macOS releases](https://github.com/devasheeshG/codex-proxy/releases)
-page. Download `Codex-Proxy-macOS.dmg`, open the disk image, and move **Codex
-Proxy.app** to Applications. This build is intended for local use; macOS may
-require Control-clicking the app and choosing **Open** because it is not
-notarized.
+The native menu-bar app shows live active-account coverage, five-hour and weekly
+quota averages, and reset countdowns in a compact popover. Refresh and Settings
+are at the top-right. The removed Accounts/demo/activity/widget interfaces are
+not part of the minimal app. See [native app documentation](clients/codex-menu-bar/README.md)
+for authentication, force-refresh behavior, tests, packaging, and signing limits.
 
 ## Project status
 

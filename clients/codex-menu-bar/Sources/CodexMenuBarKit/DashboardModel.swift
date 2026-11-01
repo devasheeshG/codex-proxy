@@ -2,140 +2,117 @@ import Combine
 import Foundation
 import Security
 
-@MainActor
-public final class DashboardModel: ObservableObject {
-    enum Tab: String, CaseIterable, Hashable { case overview = "Overview", accounts = "Accounts" }
-    enum AccountState: Equatable { case ready, cooling, reauth }
-    struct Account: Identifiable {
-        let id = UUID()
-        let name: String
-        let email: String
-        let state: AccountState
-        /// Mirrors the dashboard's Authenticated filter: credentials are present
-        /// (including accounts that are currently cooling down).
-        let authenticated: Bool
-        /// Mirrors the dashboard's Usable filter: the router can select this
-        /// account for a request right now.
-        let usable: Bool
-        let fiveHour: Int
-        let weekly: Int
-        let fiveHourReset: String
-        let weeklyReset: String
-    }
-
-    @Published var tab: Tab = .overview
-    @Published var lastUpdated = Date()
-    @Published var isRefreshing = false
-    @Published var selectedProvider = "Codex pool"
-    @Published var baseURL: String
-    @Published var username: String
-    @Published var password: String
-    @Published private(set) var isAuthenticated = false
-    @Published private(set) var overview: ProxyOverview?
-    @Published private(set) var liveAccounts: [ProxyAccount] = []
-    @Published private(set) var loadError: String?
-
-    public init() {
-        baseURL = UserDefaults.standard.string(forKey: "proxy.baseURL") ?? ""
-        username = UserDefaults.standard.string(forKey: "proxy.username") ?? ""
-        password = SecureStore.read(service: "proxy.dashboard.password") ?? ""
-        isAuthenticated = SecureStore.read(service: "proxy.dashboard.token") != nil
-    }
-
-    public var isConfigured: Bool {
-        isAuthenticated
-    }
-
-    func authenticate(baseURL rawBaseURL: String, username rawUsername: String, password rawPassword: String) async throws {
-        let baseURL = rawBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        let username = rawUsername.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !baseURL.isEmpty, !username.isEmpty, !rawPassword.isEmpty else { throw ConnectionError.missingFields }
-        let loginPath = baseURL.hasSuffix("/api") ? "/v1/auth/login" : "/api/v1/auth/login"
-        guard let url = URL(string: baseURL + loginPath) else { throw ConnectionError.invalidURL }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(LoginRequest(username: username, password: rawPassword))
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw ConnectionError.invalidResponse }
-        guard (200..<300).contains(http.statusCode) else {
-            let detail = (try? JSONDecoder().decode(ErrorResponse.self, from: data).detail) ?? "Sign-in failed (HTTP \(http.statusCode))."
-            throw ConnectionError.server(detail)
-        }
-        let token = try JSONDecoder().decode(LoginResponse.self, from: data).token
-        self.baseURL = baseURL
-        self.username = username
-        self.password = rawPassword
-        UserDefaults.standard.set(baseURL, forKey: "proxy.baseURL")
-        UserDefaults.standard.set(username, forKey: "proxy.username")
-        SecureStore.write(rawPassword, service: "proxy.dashboard.password")
-        SecureStore.write(token, service: "proxy.dashboard.token")
-        isAuthenticated = true
-        refresh()
-    }
-
-    public func showAccounts() {
-        tab = .accounts
-    }
-
-    var accounts: [Account] {
-        liveAccounts.map { account in
-            let state: AccountState = account.providerHealth == "REAUTH_REQUIRED" ? .reauth : (account.status == "COOLDOWN" ? .cooling : .ready)
-            return Account(name: account.label, email: account.accountEmail ?? "—", state: state,
-                           authenticated: account.providerHealth != "REAUTH_REQUIRED", usable: account.providerHealth == "HEALTHY" && account.status == "ACTIVE",
-                           fiveHour: Int((account.fiveHourUsedPct ?? 0) * 100), weekly: Int((account.weeklyUsedPct ?? 0) * 100),
-                           fiveHourReset: formatReset(account.fiveHourResetAt), weeklyReset: formatReset(account.weeklyResetAt))
-        }
-    }
-
-    private func formatReset(_ date: Date?) -> String { guard let date else { return "unknown" }; return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date()) }
-
-    func refresh() {
-        guard isAuthenticated else { return }
-        isRefreshing = true; loadError = nil
-        Task { @MainActor in
-            defer { isRefreshing = false }
-            do {
-                let base = baseURL.hasSuffix("/api") ? String(baseURL.dropLast(4)) : baseURL
-                guard let url = URL(string: base.hasSuffix("/") ? base : base + "/") else { throw ProxyAPIError.notConfigured }
-                let api = ProxyAPI(baseURL: url, token: SecureStore.read(service: "proxy.dashboard.token") ?? "")
-                async let nextOverview = api.overview(); async let nextAccounts = api.accounts()
-                overview = try await nextOverview; liveAccounts = try await nextAccounts; lastUpdated = Date()
-                WidgetQuotaCache.write(overview: overview!, activeAccounts: liveAccounts.filter { $0.providerHealth != "REAUTH_REQUIRED" }.count, totalAccounts: liveAccounts.count)
-            } catch { loadError = error.localizedDescription }
-        }
-    }
+protocol CredentialStore {
+    func read(_ key: String) -> String?
+    func write(_ value: String?, key: String) throws
 }
-
-private struct LoginRequest: Encodable { let username: String; let password: String }
-private struct LoginResponse: Decodable { let token: String }
-private struct ErrorResponse: Decodable { let detail: String }
-private enum ConnectionError: LocalizedError {
-    case missingFields, invalidURL, invalidResponse, server(String)
-    var errorDescription: String? {
-        switch self {
-        case .missingFields: "Base URL, username, and password are required."
-        case .invalidURL: "Enter a valid proxy base URL."
-        case .invalidResponse: "The proxy returned an invalid response."
-        case .server(let message): message
-        }
-    }
-}
-
-private enum SecureStore {
-    static func read(service: String) -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
+struct KeychainStore: CredentialStore {
+    func read(_ key: String) -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AppIdentity.keychainService, kSecAttrAccount as String: key, kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: AnyObject?
-        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data else { return nil }
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess, let data = result as? Data else { return nil }
         return String(data: data, encoding: .utf8)
     }
-
-    static func write(_ value: String, service: String) {
+    func write(_ value: String?, key: String) throws {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: AppIdentity.keychainService, kSecAttrAccount as String: key]
+        guard let value else {
+            let status = SecItemDelete(query as CFDictionary)
+            guard status == errSecSuccess || status == errSecItemNotFound else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+            return
+        }
         let data = Data(value.utf8)
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service]
-        SecItemDelete(query as CFDictionary)
-        let item = query.merging([kSecValueData as String: data]) { _, new in new }
-        SecItemAdd(item as CFDictionary, nil)
+        var status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = query; item[kSecValueData as String] = data
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
+        guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+    }
+}
+
+@MainActor
+public final class DashboardModel: ObservableObject {
+    @Published public var showingSettings: Bool
+    @Published public private(set) var overview: ProxyOverview?
+    @Published public private(set) var isRefreshing = false
+    @Published public private(set) var isSigningIn = false
+    @Published public private(set) var lastUpdated: Date?
+    @Published public private(set) var error: String?
+    @Published public private(set) var settingsError: String?
+    @Published public private(set) var isConfigured: Bool
+    let credentials: CredentialStore
+    let defaults: UserDefaults
+    let session: URLSession
+    var baseURL: String { defaults.string(forKey: "proxy.baseURL") ?? "" }
+    var username: String { defaults.string(forKey: "proxy.username") ?? "" }
+
+    public convenience init() { self.init(credentials: KeychainStore(), defaults: .standard, session: .shared) }
+    init(credentials: CredentialStore, defaults: UserDefaults, session: URLSession) {
+        self.credentials = credentials; self.defaults = defaults; self.session = session
+        let configured = credentials.read("token") != nil && !(defaults.string(forKey: "proxy.baseURL") ?? "").isEmpty
+        isConfigured = configured; showingSettings = !configured
+    }
+    func authenticate(baseURL: String, username: String, password: String) async {
+        guard !isSigningIn && !isRefreshing else { return }
+        isSigningIn = true; settingsError = nil
+        defer { isSigningIn = false }
+        do {
+            let user = username.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !user.isEmpty && !password.isEmpty else { throw NSError(domain: "Sign in", code: 1, userInfo: [NSLocalizedDescriptionKey: "Username and password are required."]) }
+            let api = try ProxyAPI(baseURL: baseURL, session: session)
+            let token = try await api.login(username: user, password: password)
+            try credentials.write(password, key: "password"); try credentials.write(token, key: "token")
+            defaults.set(api.baseURL.absoluteString, forKey: "proxy.baseURL"); defaults.set(user, forKey: "proxy.username")
+            overview = nil; lastUpdated = nil; error = nil
+            isConfigured = true; showingSettings = false
+            await refresh()
+        } catch { settingsError = error.localizedDescription }
+    }
+    private func readOverview(api: ProxyAPI, token: String) async throws -> ProxyOverview {
+        do { return try await api.overview(token: token) }
+        catch let error as ProxyAPIError where error.isUnauthorized {
+            guard let password = credentials.read("password") else { throw error }
+            let newToken = try await api.login(username: username, password: password)
+            try credentials.write(newToken, key: "token")
+            return try await api.overview(token: newToken)
+        }
+    }
+    public func refresh(force: Bool = false) async {
+        guard isConfigured && !isRefreshing else { return }
+        isRefreshing = true; error = nil
+        defer { isRefreshing = false }
+        do {
+            let api = try ProxyAPI(baseURL: baseURL, session: session)
+            guard let token = credentials.read("token") else { return }
+            // Renew an expired session before starting a possibly long force-refresh.
+            let next = try await readOverview(api: api, token: token)
+            if force {
+                let failures = try await api.refreshQuotas(token: credentials.read("token") ?? token)
+                overview = try await readOverview(api: api, token: credentials.read("token") ?? token)
+                if failures > 0 { error = "\(failures) account(s) could not refresh. Showing latest available quotas." }
+            } else { overview = next }
+            lastUpdated = Date()
+        } catch is CancellationError { }
+        catch let failure as URLError where failure.code == .cancelled { }
+        catch let failure as ProxyAPIError where failure.isUnauthorized {
+            try? credentials.write(nil, key: "token"); try? credentials.write(nil, key: "password")
+            overview = nil; lastUpdated = nil; isConfigured = false; showingSettings = true
+            settingsError = "Session expired. Sign in again."
+        } catch { error = error.localizedDescription }
+    }
+    func signOut() {
+        do { try credentials.write(nil, key: "token"); try credentials.write(nil, key: "password") }
+        catch { settingsError = error.localizedDescription; return }
+        overview = nil; lastUpdated = nil; error = nil; settingsError = nil
+        isConfigured = false; showingSettings = true
+    }
+    public static func resetText(_ date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "Next reset unavailable" }
+        let seconds = Int(date.timeIntervalSince(now))
+        if seconds <= 0 { return "Resetting…" }
+        let minutes = seconds / 60, hours = minutes / 60, days = hours / 24
+        let span = days > 0 ? "\(days)d \(hours % 24)h" : hours > 0 ? "\(hours)h \(minutes % 60)m" : minutes > 0 ? "\(minutes)m" : "\(seconds)s"
+        return "Next reset in \(span)"
     }
 }

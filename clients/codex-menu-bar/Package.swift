@@ -3,30 +3,11 @@ import PackageDescription
 
 let package = Package(
     name: "CodexMenuBar",
-    platforms: [.macOS(.v14)],
-    products: [
-        .executable(name: "CodexMenuBar", targets: ["CodexMenuBar"]),
-        .executable(name: "CodexMenuBarSnapshot", targets: ["CodexMenuBarSnapshot"]),
-        .executable(name: "CodexProxyWidget", targets: ["CodexProxyWidget"]),
-    ],
+    platforms: [.macOS(.v13)],
+    products: [.executable(name: "CodexMenuBar", targets: ["CodexMenuBar"])],
     targets: [
         .target(name: "CodexMenuBarKit"),
-        .executableTarget(
-            name: "CodexMenuBar",
-            dependencies: ["CodexMenuBarKit"],
-            resources: [.process("Resources")]
-        ),
-        .executableTarget(
-            name: "CodexMenuBarSnapshot",
-            dependencies: ["CodexMenuBarKit"]
-        ),
-        .executableTarget(
-            name: "CodexProxyWidget",
-            dependencies: ["CodexMenuBarKit"]
-        ),
-        .testTarget(
-            name: "CodexMenuBarKitTests",
-            dependencies: ["CodexMenuBarKit"]
-        ),
+        .executableTarget(name: "CodexMenuBar", dependencies: ["CodexMenuBarKit"]),
+        .testTarget(name: "CodexMenuBarKitTests", dependencies: ["CodexMenuBarKit"]),
     ]
 )

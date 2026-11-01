@@ -3,82 +3,69 @@ import SwiftUI
 
 public struct PopoverView: View {
     @ObservedObject var model: DashboardModel
-    @State private var showingSettings = false
-
-    public init(model: DashboardModel) {
-        self.model = model
-        _showingSettings = State(initialValue: !model.isConfigured)
-    }
-
+    public init(model: DashboardModel) { self.model = model }
     public var body: some View {
         VStack(spacing: 0) {
-            header
-            if showingSettings {
-                ConnectionSettings(model: model) { showingSettings = false }
-                    .padding(14)
-            } else {
-                Picker("View", selection: $model.tab) {
-                    ForEach(DashboardModel.Tab.allCases, id: \.self) { tab in
-                        Text(tab.rawValue).tag(tab)
+            HStack(spacing: 9) {
+                Image(systemName: AppIdentity.symbol).foregroundStyle(AppIdentity.accent).frame(width: 24, height: 24)
+                Text(AppIdentity.name).font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button { Task { await model.refresh(force: true) } } label: {
+                    Image(systemName: "arrow.clockwise").rotationEffect(.degrees(model.isRefreshing ? 180 : 0))
+                }.disabled(!model.isConfigured || model.isRefreshing || model.isSigningIn).help("Force refresh provider limits").accessibilityLabel("Force refresh")
+                Button { model.showingSettings.toggle() } label: { Image(systemName: model.showingSettings && model.isConfigured ? "xmark" : "gearshape") }
+                    .disabled(!model.isConfigured || model.isSigningIn).help("Connection settings").accessibilityLabel("Settings")
+            }.buttonStyle(.borderless).padding(14)
+            if model.showingSettings { ConnectionSettings(model: model).padding(.horizontal, 16).padding(.bottom, 14) }
+            else {
+                VStack(spacing: 12) {
+                    HStack {
+                        Text("Active accounts").foregroundStyle(.secondary)
+                        Spacer()
+                        Text(model.overview.map { "\($0.activeAccounts) / \($0.totalAccounts)" } ?? "—").monospacedDigit()
+                    }.font(.system(size: 11))
+                    HStack(alignment: .top, spacing: 8) {
+                        QuotaCell(label: "5-hour average", value: model.overview?.fiveHourAveragePct, reset: model.overview?.fiveHourResetAt)
+                        QuotaCell(label: "Weekly average", value: model.overview?.weeklyAveragePct, reset: model.overview?.weeklyResetAt)
                     }
-                }
-                .pickerStyle(.segmented)
-                .tint(ProxyTheme.brand)
-                .padding(.horizontal, 14)
-                .padding(.top, 11)
-
-                ScrollView {
-                    Group {
-                        switch model.tab {
-                        case .overview: OverviewView(model: model)
-                        case .accounts: AccountsView(model: model)
-                        }
-                    }
-                    .padding(14)
-                }
-                .scrollIndicators(.hidden)
+                    if let error = model.error { Text(error).font(.caption2).foregroundStyle(.orange).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled) }
+                }.padding(.horizontal, 14).padding(.bottom, 14)
             }
-
             Divider()
             HStack {
-                Text("Updated ") + Text(model.lastUpdated, style: .relative) + Text(" ago")
+                if model.isRefreshing { Text("Refreshing limits…") }
+                else if let date = model.lastUpdated { Text("Updated ") + Text(date, style: .relative) + Text(" ago") }
+                else { Text("Not updated yet") }
                 Spacer()
-                Button("Open dashboard") { if let url = URL(string: model.baseURL) { NSWorkspace.shared.open(url) } }
-                    .buttonStyle(.link)
-                    .font(.caption)
-                Button { NSApplication.shared.terminate(nil) } label: {
-                    Label("Quit", systemImage: "power")
-                }
-                .buttonStyle(.borderless)
-                .font(.caption)
-                .foregroundStyle(ProxyTheme.muted)
-                .help("Quit Codex Proxy")
+                Button("Quit") { NSApplication.shared.terminate(nil) }.buttonStyle(.plain)
+            }.font(.system(size: 9)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 9)
+        }
+        .frame(width: 360)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .task {
+            while !Task.isCancelled {
+                await model.refresh()
+                do { try await Task.sleep(for: .seconds(60)) } catch { break }
             }
-            .foregroundStyle(ProxyTheme.muted)
-            .font(.caption2)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
         }
-        .foregroundStyle(ProxyTheme.primary)
-        .background(ProxyTheme.background)
     }
+}
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            Image(nsImage: OpenAIMark.image)
-                .renderingMode(.template)
-                .foregroundStyle(ProxyTheme.primary)
-                .frame(width: 28, height: 28)
-                .background(ProxyTheme.panel, in: RoundedRectangle(cornerRadius: 8))
-            VStack(alignment: .leading, spacing: 2) { Text("Codex Proxy").font(.headline); Text("Menu bar dashboard").font(.caption).foregroundStyle(ProxyTheme.muted) }
-            Spacer()
-            Button { showingSettings.toggle() } label: { Image(systemName: showingSettings ? "xmark" : "gearshape").font(.body) }
-                .buttonStyle(.borderless).help(showingSettings ? "Close settings" : "Connection settings")
-            Label(model.isConfigured ? "Signed in" : "Sign in", systemImage: model.isConfigured ? "checkmark.circle" : "person.crop.circle")
-                .font(.caption).foregroundStyle(model.isConfigured ? ProxyTheme.good : ProxyTheme.muted)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 14)
+private struct QuotaCell: View {
+    let label: String
+    let value: Double?
+    let reset: Date?
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(label).font(.system(size: 10)).foregroundStyle(.secondary)
+            Text(value.map { String(format: "%.1f%%", min(100, max(0, $0))) } ?? "—")
+                .font(.system(size: 25, weight: .semibold, design: .monospaced)).minimumScaleFactor(0.7).lineLimit(1)
+            TimelineView(.periodic(from: .now, by: 30)) { context in
+                Text(DashboardModel.resetText(reset, now: context.date)).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(11)
+            .background(Color.primary.opacity(0.045), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.09)))
     }
 }
 
@@ -86,137 +73,25 @@ private struct ConnectionSettings: View {
     @ObservedObject var model: DashboardModel
     @State private var baseURL: String
     @State private var username: String
-    @State private var password: String
-    @State private var isSigningIn = false
-    @State private var errorMessage: String?
-    let onClose: () -> Void
-
-    init(model: DashboardModel, onClose: @escaping () -> Void) {
+    @State private var password = ""
+    init(model: DashboardModel) {
         self.model = model
-        self.onClose = onClose
-        _baseURL = State(initialValue: model.baseURL)
-        _username = State(initialValue: model.username)
-        _password = State(initialValue: model.password)
+        _baseURL = State(initialValue: model.baseURL); _username = State(initialValue: model.username)
     }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Sign in to your proxy").font(.title3.bold())
-            Text("Enter the same dashboard username and password you use in the browser. Your password is stored in the macOS Keychain.").font(.caption).foregroundStyle(ProxyTheme.muted)
-            TextField("Base URL", text: $baseURL).textFieldStyle(.roundedBorder)
-            TextField("Username", text: $username).textFieldStyle(.roundedBorder)
-            SecureField("Password", text: $password).textFieldStyle(.roundedBorder)
-            if let errorMessage { Text(errorMessage).font(.caption).foregroundStyle(ProxyTheme.bad) }
-            HStack {
-                Spacer()
-                if model.isConfigured { Button("Cancel", action: onClose).keyboardShortcut(.cancelAction) }
-                Button(isSigningIn ? "Signing in…" : "Sign in") {
-                    isSigningIn = true
-                    errorMessage = nil
-                    Task {
-                        do { try await model.authenticate(baseURL: baseURL, username: username, password: password); onClose() }
-                        catch { errorMessage = error.localizedDescription }
-                        isSigningIn = false
-                    }
-                }.buttonStyle(.borderedProminent).tint(ProxyTheme.brand).keyboardShortcut(.defaultAction).disabled(isSigningIn)
-            }
-        }
-    }
-}
-
-private struct OverviewView: View {
-    @ObservedObject var model: DashboardModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Metric(title: "Tokens processed", value: model.overview.map { formatCompact($0.tokens) } ?? "—", detail: model.loadError ?? "Live proxy data")
-                Metric(title: "Requests", value: model.overview.map { formatCompact($0.requests) } ?? "—", detail: "Current range")
-            }
-            HStack(spacing: 8) {
-                Metric(title: "Active accounts", value: model.overview.map { "\($0.activeAccounts)/\($0.totalAccounts)" } ?? "—", detail: "Authenticated and enabled")
-                Metric(title: "Weekly usage", value: model.overview.map { "\(Int($0.weeklyAveragePct))%" } ?? "—", detail: "Next reset \(model.overview.map { formatReset($0.weeklyResetAt) } ?? "unknown")")
-            }
-            SectionTitle(title: "Pool windows", action: "Accounts")
-            HStack(spacing: 8) {
-                Quota(title: "5-hour average", value: Int(model.overview?.fiveHourAveragePct ?? 0), reset: formatReset(model.overview?.fiveHourResetAt))
-                Quota(title: "Weekly average", value: Int(model.overview?.weeklyAveragePct ?? 0), reset: formatReset(model.overview?.weeklyResetAt))
-            }
-            SectionTitle(title: "Activity · 30 days", action: "Events")
-            ActivitySparkline()
-            HStack(spacing: 8) {
-                Button { model.tab = .overview } label: { Label("Open Overview", systemImage: "arrow.up.right.square") }
-                    .buttonStyle(.borderedProminent).tint(ProxyTheme.brand)
-                Button { model.tab = .accounts } label: { Label("Open Accounts", systemImage: "person.2") }
-                    .buttonStyle(.bordered)
-            }
-        }
-    }
-}
-
-private struct AccountsView: View {
-    @ObservedObject var model: DashboardModel
-    @State private var filter = "All"
-
-    private var visibleAccounts: [DashboardModel.Account] {
-        model.accounts.filter {
-            switch filter {
-            case "Authenticated": return $0.authenticated
-            case "Usable": return $0.usable
-            default: return true
-            }
-        }
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            Text("Connection").font(.headline)
+            VStack(alignment: .leading, spacing: 4) { Text("Proxy URL").font(.caption); TextField("https://your-proxy.example", text: $baseURL) }
+            VStack(alignment: .leading, spacing: 4) { Text("Username").font(.caption); TextField("Dashboard username", text: $username) }
+            VStack(alignment: .leading, spacing: 4) { Text("Password").font(.caption); SecureField("Dashboard password", text: $password) }
+            if let error = model.settingsError { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
             HStack {
-                VStack(alignment: .leading, spacing: 2) { Text("Account pool").font(.title3.bold()); Text("\(model.accounts.count) accounts · \(model.accounts.filter(\.usable).count) usable").font(.caption).foregroundStyle(ProxyTheme.muted) }
+                if model.isConfigured { Button("Sign out") { model.signOut(); password = "" } }
                 Spacer()
-            }
-            Picker("Filter", selection: $filter) { ForEach(["All", "Authenticated", "Usable"], id: \.self) { Text($0).tag($0) } }
-                .pickerStyle(.segmented)
-                .controlSize(.small)
-            ForEach(visibleAccounts) { account in AccountRow(account: account) }
-            Button { model.refresh() } label: { Label(model.isRefreshing ? "Refreshing…" : "Refresh limits", systemImage: "arrow.clockwise") }
-                .buttonStyle(.borderedProminent).tint(ProxyTheme.brand)
-                .disabled(model.isRefreshing)
-        }
+                Button(model.isSigningIn ? "Signing in…" : "Sign in") {
+                    Task { await model.authenticate(baseURL: baseURL, username: username, password: password); password = "" }
+                }.buttonStyle(.borderedProminent).tint(AppIdentity.accent).keyboardShortcut(.defaultAction)
+            }.disabled(model.isSigningIn || model.isRefreshing)
+        }.textFieldStyle(.roundedBorder)
     }
-}
-
-private struct AccountRow: View {
-    let account: DashboardModel.Account
-    var stateColor: Color { switch account.state { case .ready: ProxyTheme.good; case .cooling: ProxyTheme.warn; case .reauth: ProxyTheme.bad } }
-    var stateLabel: String { switch account.state { case .ready: "Ready"; case .cooling: "Cooling"; case .reauth: "Re-auth" } }
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack { VStack(alignment: .leading, spacing: 2) { Text(account.name).font(.subheadline.bold()); Text(account.email).font(.caption2).foregroundStyle(ProxyTheme.muted) }; Spacer(); Label(stateLabel, systemImage: "circle.fill").font(.caption2).foregroundStyle(stateColor) }
-            HStack(spacing: 8) { Quota(title: "5-hour", value: account.fiveHour, reset: "resets " + account.fiveHourReset); Quota(title: "Weekly", value: account.weekly, reset: "resets " + account.weeklyReset) }
-        }
-        .padding(10)
-        .background(ProxyTheme.card, in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(ProxyTheme.border, lineWidth: 1))
-    }
-}
-
-private func formatReset(_ date: Date?) -> String { guard let date else { return "unknown" }; return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: Date()) }
-private func formatCompact(_ value: Int) -> String { value >= 1_000_000_000 ? String(format: "%.2fB", Double(value)/1e9) : value >= 1_000_000 ? String(format: "%.2fM", Double(value)/1e6) : value >= 1_000 ? String(format: "%.1fk", Double(value)/1e3) : "\(value)" }
-
-private struct Metric: View { let title: String; let value: String; let detail: String; var body: some View { VStack(alignment: .leading, spacing: 5) { Text(title.uppercased()).font(.caption2).foregroundStyle(ProxyTheme.muted); Text(value).font(.system(.headline, design: .monospaced).weight(.semibold)); Text(detail).font(.caption2).foregroundStyle(ProxyTheme.muted) }.frame(maxWidth: .infinity, alignment: .leading).padding(10).background(ProxyTheme.card, in: RoundedRectangle(cornerRadius: 9)) } }
-private struct Quota: View { let title: String; let value: Int; let reset: String; var color: Color { value >= 95 ? ProxyTheme.bad : value >= 80 ? ProxyTheme.warn : ProxyTheme.good }; var body: some View { VStack(alignment: .leading, spacing: 5) { HStack { Text(title).font(.caption2); Spacer(); Text("\(value)%").font(.caption2.monospaced()).bold() }; ProgressView(value: Double(value), total: 100).tint(color); Text("\(reset)").font(.caption2).foregroundStyle(ProxyTheme.muted) }.frame(maxWidth: .infinity, alignment: .leading).padding(9).background(ProxyTheme.panel, in: RoundedRectangle(cornerRadius: 8)) } }
-private struct SectionTitle: View { let title: String; let action: String; var body: some View { HStack { Text(title.uppercased()).font(.caption2).foregroundStyle(ProxyTheme.muted); Spacer(); Text(action).font(.caption2).foregroundStyle(ProxyTheme.brand) } } }
-private struct ActivitySparkline: View { var body: some View { GeometryReader { geo in Path { path in let points: [CGFloat] = [0.80,0.72,0.76,0.56,0.63,0.44,0.50,0.30,0.36,0.19,0.27,0.14,0.21,0.06]; for (index, point) in points.enumerated() { let x = geo.size.width * CGFloat(index) / CGFloat(points.count - 1); let y = geo.size.height * point; index == 0 ? path.move(to: CGPoint(x: x, y: y)) : path.addLine(to: CGPoint(x: x, y: y)) } }.stroke(ProxyTheme.brand, lineWidth: 2).shadow(color: ProxyTheme.brand.opacity(0.35), radius: 4) }.frame(height: 52).padding(9).background(ProxyTheme.brand.opacity(0.08), in: RoundedRectangle(cornerRadius: 9)) } }
-
-private enum ProxyTheme {
-    static let background = Color(red: 13/255, green: 13/255, blue: 13/255)
-    static let panel = Color(red: 21/255, green: 21/255, blue: 21/255)
-    static let card = Color(red: 28/255, green: 28/255, blue: 28/255)
-    static let border = Color(red: 48/255, green: 48/255, blue: 48/255)
-    static let primary = Color(red: 247/255, green: 247/255, blue: 248/255)
-    static let muted = Color(red: 152/255, green: 152/255, blue: 163/255)
-    static let brand = Color(red: 16/255, green: 163/255, blue: 127/255)
-    static let good = Color(red: 54/255, green: 201/255, blue: 154/255)
-    static let warn = Color(red: 227/255, green: 163/255, blue: 61/255)
-    static let bad = Color(red: 240/255, green: 123/255, blue: 114/255)
 }

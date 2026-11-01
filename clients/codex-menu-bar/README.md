@@ -1,27 +1,36 @@
-# Codex Proxy menu bar app
+# Codex Proxy menu-bar app
 
-Native SwiftUI menu-bar client with a WidgetKit quota widget. for the Codex Proxy dashboard. It targets macOS 13 or newer and uses the same OpenAI mark, metrics, quota language, and account states as the web console.
+Minimal native SwiftUI app for macOS 13+ (Apple Silicon and Intel).
+It shows live enabled/authenticated account coverage, five-hour and weekly
+quota averages, useful reset countdowns, and the last successful update.
+Refresh and connection settings are in the top-right. No Accounts screen,
+activity chart, demo data, or Notification Center widget is included.
 
-Open the gear button to enter the proxy base URL and the same username and
-password used by the dashboard. The app validates them through the dashboard
-login endpoint and stores the password and returned session token in the macOS
-Keychain. No server URL or organization identity is compiled into the app.
+Enter your proxy URL and dashboard credentials in Settings. URLs ending in
+`/api` or `/api/v1` are supported. Credentials are stored in an app-specific
+macOS Keychain service (`com.recallrai.codexproxy.credentials`). Upgrading from the prototype
+requires signing in once because the prototypes shared an unsafe Keychain name.
+The app renews expired sessions and requests sign-in again if renewal fails.
+Normal refresh reads one overview API; Force Refresh explicitly probes each
+enabled authenticated account through `refresh-quota`, reports partial failures,
+and then reloads the overview. Neither operation redeems reset credits.
+Data reloads every minute while the popover is open. Errors retain the last
+successful values and timestamp rather than displaying fake zeros.
 
-## Build on macOS
+## Build and verify on macOS
 
 ```bash
-swift build --package-path clients/codex-menu-bar --configuration release
+cd clients/codex-menu-bar
+swift test
+brew install librsvg
+APP_VERSION=0.5.0 scripts/package-macos.sh
 ```
 
-The [Codex Proxy macOS releases](https://github.com/devasheeshG/codex-proxy/releases)
-page publishes an ad-hoc-signed `Codex-Proxy-macOS.dmg`. Open the disk image and
-drag **Codex Proxy.app** to Applications. The app can be opened with
-Control-click if Gatekeeper warns that the ad-hoc build is not notarized.
+CI runs unit/network tests, captures the native compact UI, builds both CPU
+architectures, verifies the app icon/executable/signature, mounts the generated
+DMG, extracts the installed app, and launches that exact binary for five seconds.
+The distribution is ad-hoc signed, not Developer-ID signed or notarized;
+Gatekeeper may require Control-click → Open. CI does not claim to verify
+Gatekeeper acceptance on another person's Mac.
 
-Production distribution still requires a Developer ID Application certificate and Apple notarization. Signing credentials must be stored in CI secrets and must never be committed to this repository.
-
-## Quota widget
-
-The package includes `CodexProxyWidget`, a WidgetKit source for macOS 14+ that shows weekly and monthly usage percentages, active/total account coverage, and the next reset timestamps. The menu-bar app writes the latest authenticated quota snapshot to the App Group `group.com.recallrai.codexproxy`; the widget refreshes it every 15 minutes.
-
-The widget target must be embedded in an Xcode app target with the same App Group entitlement before distributing a `.app`/DMG. A full Xcode host target is still required for the final signed widget extension; the Swift package target is the source/build validation layer. The Swift package build validates the widget source; the macOS release workflow packages the menu-bar app and must be extended with the widget extension when creating the signed distribution bundle.
+Download `Codex-Proxy-macOS.dmg` from the repository's macOS releases.
