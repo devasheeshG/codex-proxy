@@ -28,8 +28,8 @@ jobs:
       - name: Test, package and launch exact DMG app
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
-          APP_ARTIFACTS_codex-menu-bar: ${{ github.workspace }}/artifacts
-          APP_SNAPSHOT_codex-menu-bar: ${{ github.workspace }}/artifacts
+          APP_ARTIFACTS_DIR: ${{ github.workspace }}/artifacts
+          APP_SNAPSHOT_DIR: ${{ github.workspace }}/artifacts
         run: clients/codex-menu-bar/scripts/package-macos.sh
       - uses: actions/upload-artifact@v4
         if: always()
