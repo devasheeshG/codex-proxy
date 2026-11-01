@@ -31,7 +31,7 @@ class ArchiveRequest(BaseModel):
     cached_input_tokens: int
     status_code: Optional[int]
     reasoning_level: Optional[str]
-    request_mode: str
+    request_mode: Optional[str] = None
     cost_usd: Optional[float]
     archive_available: bool
 
@@ -127,7 +127,10 @@ async def list_archive_requests(
         event_id = _event_id(row.request_id)
         available = False
         if event_id is not None:
-            available = await _body_key(store, event_id, row.created_at, "request.json.gz") is not None
+            available = (
+                await _body_key(store, event_id, row.created_at, "request.json") is not None
+                or await _body_key(store, event_id, row.created_at, "response.json") is not None
+            )
         items.append(
             ArchiveRequest(
                 event_id=event_id,
@@ -143,7 +146,7 @@ async def list_archive_requests(
                 cached_input_tokens=row.cached_input_tokens,
                 status_code=row.status_code,
                 reasoning_level=row.reasoning_level,
-                request_mode=row.request_mode,
+                request_mode=getattr(row, "request_mode", None),
                 cost_usd=float(row.billed_cost_usd) if row.billed_cost_usd is not None else None,
                 archive_available=available,
             )
