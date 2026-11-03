@@ -414,6 +414,8 @@ async def _iter_sanitized_sse(response: httpx.Response):
     buffer = bytearray()
     pending = None
     output_started = False
+    terminal_seen = False
+    prefix = bytearray()
     try:
         while True:
             if pending is None:
@@ -445,12 +447,31 @@ async def _iter_sanitized_sse(response: httpx.Response):
                     raise _PreOutputProviderFailure(kind or "provider failure")
                 if kind in _OUTPUT_EVENT_TYPES:
                     output_started = True
+                terminal_seen = kind in {"response.completed", "response.failed", "response.incomplete"}
+                if not output_started and not terminal_seen:
+                    prefix.extend(frame)
+                    if len(prefix) > 1024 * 1024:
+                        raise _PreOutputProviderFailure("pre-output metadata limit exceeded")
+                    continue
+                if prefix:
+                    yield bytes(prefix)
+                    prefix.clear()
                 yield frame
+                if terminal_seen:
+                    return
         if buffer:
             kind, _payload = _sse_event(bytes(buffer))
             if _is_provider_error_frame(bytes(buffer)) and not output_started:
                 raise _PreOutputProviderFailure(kind or "provider failure")
-            yield bytes(buffer)
+            terminal_seen = kind in {"response.completed", "response.failed", "response.incomplete"}
+            if output_started or terminal_seen:
+                if prefix:
+                    yield bytes(prefix)
+                yield bytes(buffer) + b"\n\n"
+        if not terminal_seen:
+            if not output_started:
+                raise _PreOutputProviderFailure("upstream EOF before model output")
+            raise httpx.RemoteProtocolError("Upstream stream ended before a terminal response event")
     finally:
         if pending is not None:
             with anyio.CancelScope(shield=True):
@@ -556,7 +577,9 @@ def _emit_stream_outcome(request, accumulator, finished, user_id, api_key_id, ac
     succeeded = terminal.get("status") == "completed" or (
         "response.completed" in accumulator.event_types and not accumulator.event_types.intersection({"response.failed", "response.incomplete"})
     )
-    event_type = "response.completed" if succeeded else ("response.failed" if terminal else "response.interrupted")
+    event_type = (
+        "response.completed" if succeeded else ("response.failed" if terminal or "error" in accumulator.event_types else "response.interrupted")
+    )
     _emit_event(
         request,
         event_type,
@@ -2493,10 +2516,11 @@ async def proxy_responses(
     )
 
     async def stream_body():
-        nonlocal response, chosen_id, accumulator
+        nonlocal response, chosen_id, chosen_fallback_id, accumulator
         finished = False
         active_response = response
         active_account = chosen_id
+        retry_deadline = asyncio.get_running_loop().time() + max(0, settings.POOL_WAIT_TIMEOUT_SECONDS)
         try:
             while True:
                 try:
@@ -2522,40 +2546,121 @@ async def proxy_responses(
                         message=f"Pre-output provider failure; retrying another account: {exc}",
                         metadata={"failure_class": "pre_output_provider_failure"},
                     )
-                    next_account = rotation.select_account(
-                        db,
-                        user,
-                        excluded,
-                        model=str(request_model) if request_model else None,
+                    if active_account is not None:
+                        failed_account = db.get(AccountDb, active_account)
+                        if failed_account is not None:
+                            rotation.mark_cooldown(db, failed_account, max(1, settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS))
+                    else:
+                        if chosen_fallback_id is not None:
+                            excluded_fallbacks.add(chosen_fallback_id)
+                    deadline = retry_deadline
+                    recovered = False
+                    while True:
+                        db.expire_all()
+                        next_account = rotation.select_account(db, user, excluded, model=str(request_model) if request_model else None)
+                        next_fallback = None
+                        if next_account is None and user.fallback_enabled:
+                            next_fallback = openai_fallbacks.select_provider(
+                                db, excluded_fallbacks, model=str(request_model) if request_model else None
+                            )
+                        if next_account is None and next_fallback is None:
+                            if asyncio.get_running_loop().time() >= deadline:
+                                break
+                            # Pool slots/cooldowns can recover asynchronously. Comments keep
+                            # the established downstream stream alive while we wait.
+                            yield b": proxy waiting for capacity\n\n"
+                            await asyncio.sleep(
+                                min(max(0.01, settings.POOL_WAIT_POLL_INTERVAL_SECONDS), max(0, deadline - asyncio.get_running_loop().time()))
+                            )
+                            excluded.clear()
+                            excluded_fallbacks.clear()
+                            continue
+                        candidate = None
+                        try:
+                            if next_account is not None:
+                                excluded.add(next_account.id)
+                                _emit_event(
+                                    request,
+                                    "account.attempt",
+                                    user_id=key.user_id,
+                                    api_key_id=key.id,
+                                    account_id=next_account.id,
+                                    metadata={"retry_after_pre_output_failure": True},
+                                )
+                                candidate = await _send_account_candidate(db, request, body, upstream_url, next_account)
+                                if candidate.status_code == 401:
+                                    await candidate.aclose()
+                                    candidate = await _send_account_candidate(db, request, body, upstream_url, next_account, force_refresh=True)
+                            else:
+                                excluded_fallbacks.add(next_fallback.id)
+                                _emit_event(
+                                    request, "fallback.attempt", user_id=key.user_id, api_key_id=key.id, fallback_provider_id=next_fallback.id
+                                )
+                                candidate = await _send_fallback_with_egress(request, fallback_body, upstream_path, next_fallback)
+                            # Never mistake an HTTP error body for a successful SSE stream.
+                            if candidate.status_code >= 400:
+                                if next_account is not None and candidate.status_code == 429:
+                                    raw_error = await candidate.aread()
+                                    rotation.update_quota_from_headers(next_account, candidate.headers)
+                                    rotation.apply_rate_limit_body(next_account, raw_error)
+                                    rotation.mark_cooldown(
+                                        db, next_account, rotation.parse_retry_after(candidate.headers, next_account.cooldown_seconds)
+                                    )
+                                elif next_account is not None:
+                                    rotation.mark_cooldown(db, next_account, max(1, settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS))
+                                else:
+                                    openai_fallbacks.mark_cooldown(
+                                        next_fallback, max(1, settings.TRANSIENT_UPSTREAM_COOLDOWN_SECONDS), "Retry response rejected before output"
+                                    )
+                                    db.commit()
+                                await candidate.aclose()
+                                continue
+                            active_response = candidate
+                            active_account = next_account.id if next_account is not None else None
+                            response = candidate
+                            chosen_id = active_account
+                            chosen_fallback_id = next_fallback.id if next_fallback is not None else None
+                            accumulator = usage.StreamUsageAccumulator(
+                                fallback_model=request_model, reasoning_level=request_reasoning, request_mode=request_mode
+                            )
+                            _set_archive_metadata(request, account_id=chosen_id, fallback_provider_id=chosen_fallback_id)
+                            recovered = True
+                            break
+                        except (account_limiter.AccountBusy, egress.EgressUnavailable):
+                            if candidate is not None:
+                                await candidate.aclose()
+                            continue
+                        except (httpx.TransportError, provider_health.ProviderReauthenticationRequired) as retry_error:
+                            if candidate is not None:
+                                await candidate.aclose()
+                            _emit_event(
+                                request,
+                                "account.error" if next_account is not None else "fallback.error",
+                                user_id=key.user_id,
+                                api_key_id=key.id,
+                                account_id=next_account.id if next_account is not None else None,
+                                fallback_provider_id=next_fallback.id if next_fallback is not None else None,
+                                message=f"Retry failed before output: {type(retry_error).__name__}",
+                            )
+                            continue
+                    if not recovered:
+                        failure = (
+                            b'event: error\ndata: {"type":"error","code":"capacity_exhausted",'
+                            b'"message":"All eligible accounts and permitted fallbacks failed before output; retry the request."}\n\n'
+                        )
+                        accumulator.feed(failure)
+                        yield failure
+                        break
+                except httpx.TransportError:
+                    # Output may already contain tool calls. Do not replay it or invent
+                    # response.completed; send an explicit, observable failure instead.
+                    failure = (
+                        b'event: error\ndata: {"type":"error","code":"upstream_stream_incomplete",'
+                        b'"message":"The upstream stream disconnected after output began."}\n\n'
                     )
-                    if next_account is None:
-                        raise
-                    # Discard protocol metadata from the failed attempt; the
-                    # request outcome belongs to the account that eventually
-                    # serves the stream.
-                    accumulator = usage.StreamUsageAccumulator(
-                        fallback_model=request_model,
-                        reasoning_level=request_reasoning,
-                        request_mode=request_mode,
-                    )
-                    _emit_event(
-                        request,
-                        "account.attempt",
-                        user_id=key.user_id,
-                        api_key_id=key.id,
-                        account_id=next_account.id,
-                        metadata={"priority": next_account.priority, "retry_after_pre_output_failure": True},
-                    )
-                    active_response = await _send_account_candidate(
-                        db,
-                        request,
-                        body,
-                        upstream_url,
-                        next_account,
-                    )
-                    active_account = next_account.id
-                    response = active_response
-                    chosen_id = active_account
+                    accumulator.feed(failure)
+                    yield failure
+                    break
         finally:
             accumulator.result()
             _emit_stream_outcome(request, accumulator, finished, key.user_id, key.id, chosen_id, chosen_fallback_id, response_status)

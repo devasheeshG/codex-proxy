@@ -17,7 +17,7 @@ def test_unix_installer_updates_native_config_and_removes_legacy_wrappers():
     assert 'print "model_provider = \\"codex_proxy\\""' in script
     assert "[model_providers.codex_proxy]" in script
     assert "[model_providers.codex_proxy.auth]" in script
-    assert "stream_idle_timeout_ms = 900000" in script
+    assert "stream_idle_timeout_ms = 600000" in script
     assert 'cat > "$TOKEN_HELPER"' in script
     assert 'remove_legacy_wrapper "$USER_BIN_DIR/codex"' in script
     assert 'remove_legacy_wrapper "$USER_BIN_DIR/codex-proxy"' in script
@@ -27,7 +27,7 @@ def test_unix_installer_updates_native_config_and_removes_legacy_wrappers():
 def test_windows_installer_configures_the_same_stream_idle_timeout():
     script = WINDOWS_INSTALLER.read_text()
 
-    assert "$result.Add('stream_idle_timeout_ms = 900000')" in script
+    assert "$result.Add('stream_idle_timeout_ms = 600000')" in script
 
 
 def test_dashboard_setup_commands_never_include_the_revealed_key():
@@ -61,7 +61,7 @@ def test_unix_installer_reads_key_from_file_without_putting_it_in_argv(tmp_path)
     assert (codex_home / "codex-proxy.key").read_text() == "usr_test_secret_without_a_trailing_newline\n"
     config = (codex_home / "config.toml").read_text()
     assert 'base_url = "https://proxy.example.test/api/v1"' in config
-    assert "stream_idle_timeout_ms = 900000" in config
+    assert "stream_idle_timeout_ms = 600000" in config
     assert "usr_test_secret" not in config
 
 

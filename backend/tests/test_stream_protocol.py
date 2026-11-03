@@ -54,7 +54,6 @@ def test_pre_output_transport_error_is_retryable():
                 raise httpx.RemoteProtocolError("peer closed connection")
 
         iterator = proxy._iter_sanitized_sse(httpx.Response(200, stream=Stream()))
-        assert b"response.created" in await anext(iterator)
         try:
             await anext(iterator)
         except proxy._PreOutputProviderFailure as exc:
