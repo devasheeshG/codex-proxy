@@ -570,6 +570,15 @@ def _emit_event(
         )
 
 
+def _terminal_failure_frame(request_id: str, accumulator: usage.StreamUsageAccumulator, code: str, message: str) -> bytes:
+    response_id = accumulator.response_id or f"resp_proxy_{request_id.removeprefix('req_')}"
+    payload = {
+        "type": "response.failed",
+        "response": {"id": response_id, "status": "failed", "error": {"code": code, "message": message}},
+    }
+    return ("event: response.failed\ndata: " + json.dumps(payload, separators=(",", ":")) + "\n\n").encode()
+
+
 def _emit_stream_outcome(request, accumulator, finished, user_id, api_key_id, account_id, fallback_id, status_code):
     terminal = accumulator.terminal_response or {}
     # The client may close immediately after the terminal event; transport
@@ -2644,9 +2653,11 @@ async def proxy_responses(
                             )
                             continue
                     if not recovered:
-                        failure = (
-                            b'event: error\ndata: {"type":"error","code":"capacity_exhausted",'
-                            b'"message":"All eligible accounts and permitted fallbacks failed before output; retry the request."}\n\n'
+                        failure = _terminal_failure_frame(
+                            request.state.proxy_event_request_id or "req_unknown",
+                            accumulator,
+                            "capacity_exhausted",
+                            "All eligible accounts and permitted fallbacks failed before output; retry the request.",
                         )
                         accumulator.feed(failure)
                         yield failure
@@ -2654,9 +2665,11 @@ async def proxy_responses(
                 except httpx.TransportError:
                     # Output may already contain tool calls. Do not replay it or invent
                     # response.completed; send an explicit, observable failure instead.
-                    failure = (
-                        b'event: error\ndata: {"type":"error","code":"upstream_stream_incomplete",'
-                        b'"message":"The upstream stream disconnected after output began."}\n\n'
+                    failure = _terminal_failure_frame(
+                        request.state.proxy_event_request_id or "req_unknown",
+                        accumulator,
+                        "upstream_stream_incomplete",
+                        "The upstream stream disconnected after output began.",
                     )
                     accumulator.feed(failure)
                     yield failure

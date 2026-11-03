@@ -105,6 +105,7 @@ class StreamUsageAccumulator:
         self.event_types: Set[str] = set()
         self.usage_keys: Set[str] = set()
         self.terminal_response: Optional[Dict[str, Any]] = None
+        self.response_id: Optional[str] = None
         self._output_items: Dict[int, Dict[str, Any]] = {}
 
     def feed(self, chunk: bytes) -> None:
@@ -133,6 +134,8 @@ class StreamUsageAccumulator:
             if isinstance(output_index, int):
                 self._output_items[output_index] = dict(event["item"])
         response = event.get("response")
+        if isinstance(response, Mapping) and isinstance(response.get("id"), str):
+            self.response_id = response["id"]
         if isinstance(response, Mapping) and event_type in {"response.completed", "response.failed", "response.incomplete"}:
             self.terminal_response = dict(response)
             if not self.terminal_response.get("output") and self._output_items:

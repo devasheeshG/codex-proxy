@@ -260,3 +260,14 @@ def test_completed_response_is_success_when_client_closes_before_eof(monkeypatch
     monkeypatch.setattr(proxy, "_emit_event", lambda request, event_type, **kwargs: recorded.append(event_type))
     proxy._emit_stream_outcome(None, accumulator, False, None, None, None, None, 200)
     assert recorded == ["response.completed"]
+
+
+def test_proxy_synthesizes_parseable_terminal_failure_with_response_id():
+    from app.utils.usage import StreamUsageAccumulator
+
+    accumulator = StreamUsageAccumulator()
+    accumulator.feed(frame("response.created", response={"id": "resp_original", "status": "in_progress"}))
+    raw = proxy._terminal_failure_frame("req_123", accumulator, "capacity_exhausted", "all accounts failed")
+    assert b"event: response.failed" in raw
+    assert b'"id":"resp_original"' in raw
+    assert b'"status":"failed"' in raw
