@@ -1632,7 +1632,9 @@ async def proxy_search(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         message="No subscription account could serve the web-search request",
     )
-    notifications.enqueue_elevated_503(db, settings.FRONTEND_ORIGIN)
+    notifications.enqueue_capacity_exhausted(
+        db, settings.FRONTEND_ORIGIN, model=str(request_model) if request_model else None, request_id=request.state.proxy_event_request_id
+    )
     known_model = bool(request_model) and any(
         rotation.supports_model(account, str(request_model)) is True
         for account in db.query(AccountDb).filter(AccountDb.status != AccountStatus.DISABLED).all()
@@ -1645,7 +1647,6 @@ async def proxy_search(
             detail=(f"Model '{client_model}' is temporarily unavailable for web search across the pooled accounts."),
             headers={"Retry-After": "30"},
         )
-    notifications.enqueue_pool_unavailable(db, settings.FRONTEND_ORIGIN)
     db.commit()
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2242,19 +2243,21 @@ async def proxy_responses(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             message="No subscription account or API fallback could serve the request",
         )
-        notifications.enqueue_elevated_503(db, settings.FRONTEND_ORIGIN)
+        notifications.enqueue_capacity_exhausted(
+            db, settings.FRONTEND_ORIGIN, model=str(request_model) if request_model else None, request_id=request.state.proxy_event_request_id
+        )
         known_model = bool(request_model) and any(
             rotation.supports_model(account, str(request_model)) is True
             for account in db.query(AccountDb).filter(AccountDb.status != AccountStatus.DISABLED).all()
         )
         if request_model and (model_rejected or known_model):
             client_model = requested_model if isinstance(requested_model, str) else request_model
+            db.commit()
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=f"Model '{client_model}' is temporarily unavailable across the pooled accounts.",
                 headers={"Retry-After": "30"},
             )
-        notifications.enqueue_pool_unavailable(db, settings.FRONTEND_ORIGIN)
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

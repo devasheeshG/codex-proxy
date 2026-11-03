@@ -520,3 +520,18 @@ mapping and the approved company egress list.
 Each preset and user policy has an **Allow 1M context window** option. When it is off, the proxy advertises the standard 272,000-token Codex context and ceiling. When it is on, the authenticated user's model catalog advertises a 1,000,000-token context and ceiling with a 900,000-token automatic-compaction limit. Existing user `Devasheesh` is explicitly migrated with the option enabled; new users and everyone else default to the standard window.
 
 Presets include **Allow API fallback providers**. Users inherit this setting unless they select a per-user fallback override. Clearing the override restores preset inheritance. The migration preserves existing user fallback permissions.
+
+## Unified capacity alerts
+
+**Request capacity exhausted** replaces Entire account pool unavailable and
+503 capacity exhaustion. An exhausted HTTP 503 request queues one alert type,
+including model-specific failures, with the model, failure reason, pool counts,
+next useful capacity reset, and a rolling 60-second failure/user summary.
+
+Deployment automatically merges old database rules per channel: enabled when
+either old rule was enabled; the longest enabled-rule cooldown wins; customized
+old templates are preserved together using the supported legacy variables.
+Existing merged-rule settings are never overwritten on subsequent migrations.
+Legacy queued/retrying duplicates are suppressed; sent history stays intact and
+still contributes to the shared notification cooldown. No migration sends a
+notification. A zero cooldown allows one alert per exhausted request.
