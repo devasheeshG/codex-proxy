@@ -12,6 +12,29 @@ from app.utils.postgres import ProxyEventDb, UserDb, get_db_cm
 logger = get_logger()
 
 
+def record_limit_reset(account_id: uuid.UUID, result: Mapping[str, Any], *, source: str, credit_id: str | None) -> None:
+    """Audit a confirmed credit consumption before the subsequent usage probe.
+
+    No-op and idempotent replay outcomes did not consume a new credit.
+    Use a separate timeline ID, since this operation has no inference archive.
+    """
+    if result.get("code") != "reset":
+        return
+    record_event(
+        "account.limit_reset",
+        f"limit_reset_{uuid.uuid4().hex}",
+        account_id=account_id,
+        message=f"Limit reset redeemed ({source}).",
+        metadata={
+            "source": source,
+            "credit_id": credit_id,
+            "windows_reset": result.get("windows_reset"),
+            "idempotency_key": result.get("idempotency_key"),
+            "request_outcome": "succeeded",
+        },
+    )
+
+
 def record_event(
     event_type: str,
     request_id: str,

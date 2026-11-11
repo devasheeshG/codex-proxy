@@ -18,6 +18,7 @@ const EVENT_TYPES = [
     "account.busy",
     "account.capacity",
     "account.cooldown",
+    "account.limit_reset",
     "account.error",
     "account.rate_limited",
     "account.response_received",
@@ -60,7 +61,8 @@ const rowTone = (type: string) =>
           ? "bg-warn-500/10 hover:bg-warn-500/15"
           : type.includes("response_received") ||
               type.includes("returned") ||
-              type === "response.completed"
+              type === "response.completed" ||
+              type === "account.limit_reset"
             ? "bg-good-500/10 hover:bg-good-500/15"
             : "hover:bg-brand-500/5";
 

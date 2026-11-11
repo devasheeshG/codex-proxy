@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session, object_session
 
 from app import config
 from app.model_catalog import configured_model_ids
-from app.utils import crypto, oauth, provider_health
+from app.utils import crypto, events, oauth, provider_health
 from app.utils.models.api import AccountStatus, ProviderHealth
 from app.utils.postgres import AccountDb, ProxyEventDb, UserDb
 
@@ -640,6 +640,7 @@ def auto_redeem_weekly_reset(
         idempotency_key=redeem_request_id,
         **_provider_call_kwargs(egress_target),
     )
+    events.record_limit_reset(locked.id, result, source="automatic", credit_id=credit_id)
     refreshed = oauth.fetch_usage(
         access_token,
         locked.chatgpt_account_id,

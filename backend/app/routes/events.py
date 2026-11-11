@@ -131,7 +131,9 @@ def list_events(
         db.query(ProxyEventDb)
         .filter(
             ProxyEventDb.request_id.in_(request_ids),
-            ProxyEventDb.event_type.in_(["response.completed", "response.failed", "response.interrupted", "request.exhausted", "response.returned"]),
+            ProxyEventDb.event_type.in_(
+                ["response.completed", "response.failed", "response.interrupted", "request.exhausted", "response.returned", "account.limit_reset"]
+            ),
         )
         .order_by(desc(ProxyEventDb.created_at), desc(ProxyEventDb.id))
         .all()
@@ -142,7 +144,7 @@ def list_events(
     for outcome in outcome_rows:
         if outcome.request_id in outcomes:
             continue
-        if outcome.event_type == "response.completed":
+        if outcome.event_type in {"response.completed", "account.limit_reset"}:
             outcomes[outcome.request_id] = "succeeded"
         elif outcome.event_type in {"response.failed", "response.interrupted", "request.exhausted"} or (outcome.status_code or 0) >= 400:
             outcomes[outcome.request_id] = "failed"

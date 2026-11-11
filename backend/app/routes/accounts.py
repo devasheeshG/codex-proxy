@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app import config
 from app.logger import get_logger
-from app.utils import crypto, egress, notifications, oauth, provider_health, rotation, security, usage, warmup
+from app.utils import crypto, egress, events, notifications, oauth, provider_health, rotation, security, usage, warmup
 from app.utils.models.api import (
     Account,
     AccountResponse,
@@ -673,6 +673,7 @@ def consume_limit_reset(
         if egress.provider_call_kwargs(target):
             consume_kwargs["egress_target"] = target
         result = oauth.consume_reset_credit(access_token, account.chatgpt_account_id, **consume_kwargs)
+        events.record_limit_reset(account.id, result, source="manual", credit_id=credit_id)
         _probe_account(account, access_token, egress_target=target)
     except provider_health.ProviderReauthenticationRequired as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
